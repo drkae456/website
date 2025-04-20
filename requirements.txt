@@ -5,7 +5,7 @@ django-extensions==3.2.3
 django-light==0.1.0.post3
 factory_boy==3.3.1
 Faker==27.4.0
-python-dotenv==1.0.1
+python-dotenv==1.0.0
 filelock==3.13.4
 six==1.16.0
 django-ratelimit==4.1.0
