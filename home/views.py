@@ -1415,3 +1415,21 @@ def leaderboard_update():
             if total_points > 0:
                 LeaderBoardTable.objects.create(first_name=user.first_name, last_name=user.last_name, category=category, total_points=total_points)
 
+def get_current_user(request):
+    """
+    Returns information about the current logged-in user.
+    Returns user ID, first name, last name, and authentication status.
+    """
+    if request.user.is_authenticated:
+        return JsonResponse({
+            'is_authenticated': True,
+            'id': request.user.id,
+            'email': request.user.email,
+            'first_name': request.user.first_name,
+            'last_name': request.user.last_name
+        })
+    else:
+        return JsonResponse({
+            'is_authenticated': False
+        })
+

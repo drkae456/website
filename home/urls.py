@@ -126,7 +126,10 @@ urlpatterns = [
     path('user-management/', UserManagementAPI.as_view(), name='user-management'),
     path('', include(router.urls)), 
     path('feedback/', views.feedback_view, name='feedback'),
-    path('feedback/delete/<int:id>', delete_feedback, name='delete_feedback')
+    path('feedback/delete/<int:id>', delete_feedback, name='delete_feedback'),
+    
+    # Current user info endpoint
+    path('get-current-user/', views.get_current_user, name='get_current_user')
 
 
 ]

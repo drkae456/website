@@ -68,6 +68,11 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text=_("Designates whether the user has verified their account."),
     )
+    is_master = models.BooleanField(
+        _("master user"),
+        default=False,
+        help_text=_("Designates whether this user has master privileges."),
+    )
     created_at = models.DateTimeField(_("created_at"), auto_now_add=True)
     updated_at = models.DateTimeField(_("updated_at"), auto_now=True)
     
@@ -81,6 +86,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     class Meta:
         verbose_name = _("user")
         verbose_name_plural = _("users")
+        permissions = [
+            ("can_manage_master_users", "Can manage master users"),
+        ]
 
     def __str__(self):
         return self.get_full_name()

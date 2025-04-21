@@ -45,11 +45,23 @@ DEBUG = not PRODUCTION
 ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 # Add here your deployment HOSTS
-CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'http://localhost:5085']
+CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'http://localhost:5085', 'http://localhost:8001']
+
+# Allow CORS for chatbot communication
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:8000',
+    'http://localhost:5085', 
+    'http://localhost:8001',
+]
+CORS_ALLOW_CREDENTIALS = True
 
 RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if RENDER_EXTERNAL_HOSTNAME:    
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
+    # Also add to CORS settings
+    CORS_ALLOWED_ORIGINS.append(f'https://{RENDER_EXTERNAL_HOSTNAME}')
+    CSRF_TRUSTED_ORIGINS.append(f'https://{RENDER_EXTERNAL_HOSTNAME}')
 
 #Secure Cookies Can be implemented but it affects OTP Functionality.
 #Ensure cookies are only sent over HTTPS when set True
@@ -152,11 +164,10 @@ HOME_TEMPLATES = os.path.join(BASE_DIR, 'home', 'templates')
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-
-        "DIRS": [BASE_DIR / HOME_TEMPLATES],
-
-        "DIRS": [os.path.join(BASE_DIR, "templates")],
-      
+        "DIRS": [
+            BASE_DIR / HOME_TEMPLATES,
+            os.path.join(BASE_DIR, "templates")
+        ],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -165,8 +176,6 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 'home.context_processors.dynamic_page_title',
-
-
             ],
         },
     },
