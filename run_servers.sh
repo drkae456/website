@@ -3,7 +3,7 @@
 # Run both the main app and the chatbot server
 
 # Start chatbot server in the background
-echo "Starting chatbot server on port 8001..."
+echo "Starting chatbot server on port 5005..."
 python chatbot_server.py &
 CHATBOT_PID=$!
 

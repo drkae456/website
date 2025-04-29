@@ -1,23 +1,27 @@
 from django.db import models
 from django.utils import timezone
+from django.contrib.auth import get_user_model
 import uuid
 
 
 class ChatSession(models.Model):
     """Tracks individual chat sessions with users"""
     session_id = models.CharField(max_length=100, unique=True, default=uuid.uuid4)
+    user = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True, blank=True, related_name='chat_sessions')
     created_at = models.DateTimeField(default=timezone.now)
     last_interaction = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
-        return f"Chat Session {self.session_id}"
+        if self.user:
+            return f"Chat Session {self.session_id} - {self.user.username}"
+        return f"Chat Session {self.session_id} - Guest"
 
 
 class ChatMessage(models.Model):
     """Stores individual messages within a chat session"""
     session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name='messages')
-    is_user_message = models.BooleanField(default=True)
+    is_bot = models.BooleanField(default=False)  # True for bot messages, False for user messages
     message = models.TextField()
     timestamp = models.DateTimeField(auto_now_add=True)
 
@@ -25,7 +29,7 @@ class ChatMessage(models.Model):
         ordering = ['timestamp']
 
     def __str__(self):
-        return f"{'User' if self.is_user_message else 'Bot'} message at {self.timestamp}"
+        return f"{'Bot' if self.is_bot else 'User'} message at {self.timestamp}"
 
 
 class CompanyInformation(models.Model):

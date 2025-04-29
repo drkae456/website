@@ -38,20 +38,20 @@ if not SECRET_KEY:
 # DEBUG = 'RENDER' not in os.environ
 PRODUCTION = 'RUN_MAIN' not in os.environ
 # Set DEBUG based on the environment. TO test 404 locally, set Debug = False.
-DEBUG = not PRODUCTION
+DEBUG = True if not os.environ.get('PRODUCTION', False) else False
 
 
 # Docker HOST
 ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 # Add here your deployment HOSTS
-CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'http://localhost:5085', 'http://localhost:8001']
+CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'http://localhost:5005', 'http://localhost:8001']
 
 # Allow CORS for chatbot communication
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:8000',
-    'http://localhost:5085', 
+    'http://localhost:5005',
     'http://localhost:8001',
 ]
 CORS_ALLOW_CREDENTIALS = True
@@ -68,20 +68,16 @@ if RENDER_EXTERNAL_HOSTNAME:
 SESSION_COOKIE_SECURE = False
  
 # Prevents JavaScript from accessing session cookies when set True
-SESSION_COOKIE_HTTPONLY = False
+SESSION_COOKIE_HTTPONLY = True
  
 #Mitigate CSRF attacks by restricting cross-origin cookie sharing when set Strict
 SESSION_COOKIE_SAMESITE = 'Lax'
 
 #Ensure CSRF cookies are sent over HTTPS only
-CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = False
 
 #Enhance CSRF protection
-CSRF_COOKIE_SAMESITE = 'Strict'
-
-#Ensure DEBUG is set to False in production to avoid sensitive information exposure
-DEBUG = True
-
+CSRF_COOKIE_SAMESITE = 'Lax'
 
 #Limit request header sizes and body lenghts
 #Limit number of form fileds
@@ -124,16 +120,16 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    # CORS middleware must come before commonmiddleware
-    "corsheaders.middleware.CorsMiddleware",
-    "django.middleware.security.SecurityMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "django.contrib.messages.middleware.MessageMiddleware",
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'csp.middleware.CSPMiddleware',  # Add CSP middleware
     "home.idle.IdleTimeoutMiddleware",  
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "home.ratelimit_middleware.GlobalLockoutMiddleware",
     "core.middleware.LogRequestMiddleware",
 ]
@@ -345,8 +341,8 @@ SECURE_HSTS_PRELOAD = True
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
-SESSION_COOKIE_AGE = 600 #10 minutes
-SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SESSION_COOKIE_AGE = 86400  # 24 hours in seconds
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_SAVE_EVERY_REQUEST = True
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 
@@ -415,7 +411,18 @@ CORS_ALLOW_CREDENTIALS = True  # Allow cookies or other credentials
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'content-type',
     'authorization',
-
+    'x-auth-token',
 ]
+
+# Content Security Policy settings
+CSP_DEFAULT_SRC = ("'self'",)
+CSP_CONNECT_SRC = (
+    "'self'",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+)
+CSP_SCRIPT_SRC = ("'self'", "'unsafe-inline'", "'unsafe-eval'")
+CSP_STYLE_SRC = ("'self'", "'unsafe-inline'")
+CSP_IMG_SRC = ("'self'", "data:", "https:")
 
 

@@ -1,5 +1,6 @@
 import logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG level to see all logs
 
 from django.db.models import Q, F, Value, FloatField, Case, When, IntegerField
 from django.db.models.functions import Length
@@ -7,6 +8,12 @@ import re
 import string
 from functools import reduce
 import operator
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import normalize
+# Import difflib for fuzzy matching
+import difflib
 # Import local models first
 from .models import FAQ, PageContent, ChatSession, ChatMessage, CompanyInformation, Project, ProductService 
 # Then import models from other apps
@@ -30,9 +37,9 @@ from home.models import (
     SecurityEvent,
     LeaderBoardTable
 )
-from django.db import models
-from django.db import connection
+from django.db import models, connection
 from django.db.utils import OperationalError
+import time
 
 # List of common English stopwords
 STOPWORDS = {
@@ -92,20 +99,26 @@ def preprocess_query(query):
     Returns:
         str: Preprocessed query
     """
+    logger.debug(f"Preprocessing query: '{query}'")
+    
     # Handle None or empty query
     if not query:
+        logger.debug("Empty query received")
         return ""
         
     # Convert to lowercase
     query = query.lower()
+    logger.debug(f"Converted to lowercase: '{query}'")
     
     # Remove punctuation (except hyphens which might be part of terms like "app-attack")
     punctuation_to_remove = string.punctuation.replace('-', '')
     translator = str.maketrans('', '', punctuation_to_remove)
     query = query.translate(translator)
+    logger.debug(f"Removed punctuation: '{query}'")
     
     # Remove extra whitespace
     query = ' '.join(query.split())
+    logger.debug(f"Final preprocessed query: '{query}'")
     
     return query
 
@@ -119,14 +132,18 @@ def remove_stopwords(query):
     Returns:
         str: Query with stopwords removed
     """
+    logger.debug(f"Removing stopwords from: '{query}'")
     words = query.split()
     filtered_words = [word for word in words if word.lower() not in STOPWORDS]
     
     # If all words were stopwords, return the original query
     if not filtered_words and words:
+        logger.debug("All words were stopwords, returning original query")
         return query
         
-    return ' '.join(filtered_words)
+    result = ' '.join(filtered_words)
+    logger.debug(f"After stopword removal: '{result}'")
+    return result
 
 def extract_project_keywords(query):
     """
@@ -172,150 +189,1394 @@ def extract_general_keywords(query):
     
     return keywords
 
-def search_database(query):
+def execute_sqlite_query(query):
     """
-    Search the database for relevant content using Django's ORM capabilities.
+    Execute a direct SQLite query and return results
     
     Args:
-        query (str): The search query
+        query (str): The SQL query to execute
         
     Returns:
-        dict: Dictionary containing search results and metadata
+        list: List of dictionaries containing query results
     """
     try:
-        # Initialize response
-        response = {
-            'query': query,
-            'results': [],
-            'total_results': 0,
-            'categories': set()  # Using set to avoid duplicates
-        }
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            columns = [col[0] for col in cursor.description]
+            results = []
+            for row in cursor.fetchall():
+                results.append(dict(zip(columns, row)))
+            return results
+    except Exception as e:
+        logger.error(f"Error executing SQLite query: {str(e)}")
+        return []
+
+def preprocess_text(text):
+    """
+    Preprocess text for TF-IDF vectorization
+    """
+    if not text:
+        return ""
+    # Convert to lowercase
+    text = text.lower()
+    # Remove punctuation
+    text = re.sub(r'[^\w\s]', ' ', text)
+    # Remove extra whitespace
+    text = ' '.join(text.split())
+    return text
+
+def get_document_corpus():
+    """
+    Get all documents from the database for TF-IDF vectorization
+    Returns a list of tuples (id, type, text)
+    """
+    documents = []
+    
+    try:
+        # Get projects
+        projects = Project.objects.all()
+        for project in projects:
+            text = f"{project.name} {project.description} {project.keywords}"
+            if text.strip():  # Only add non-empty documents
+                documents.append((project.id, 'project', preprocess_text(text)))
+        logger.info(f"Added {len(projects)} projects to corpus")
         
-        # Handle empty query case
-        if not query or query.strip() == "":
-            return response
-            
-        # Extract keywords for searching
-        keywords = [k.strip() for k in query.split() if k.strip()]
-        if not keywords:
-            return response
-            
-        # Search PageContent
-        try:
-            page_q = Q()
-            for keyword in keywords:
-                page_q |= (
-                    Q(title__icontains=keyword) |
-                    Q(content__icontains=keyword) |
-                    Q(keywords__icontains=keyword) |
-                    Q(page_category__icontains=keyword)
-                )
-            
-            page_results = PageContent.objects.filter(page_q).annotate(
-                relevance=Case(
-                    When(title__icontains=query, then=Value(10)),
-                    When(keywords__icontains=query, then=Value(8)),
-                    When(content__icontains=query, then=Value(5)),
-                    default=Value(1),
-                    output_field=IntegerField(),
-                )
-            ).order_by('-relevance', '-priority')
-
-            for result in page_results:
-                response['results'].append({
-                    'category': 'page_content',
-                    'title': result.title,
-                    'content': result.content,
-                    'page_path': result.page_path,
-                    'priority': result.priority,
-                    'relevance_score': result.relevance
-                })
-                response['categories'].add('page_content')
-        except Exception as e:
-            logger.error(f"Error searching PageContent: {str(e)}")
-
-        # Search FAQ
-        try:
-            faq_q = Q()
-            for keyword in keywords:
-                faq_q |= (
-                    Q(question__icontains=keyword) |
-                    Q(answer__icontains=keyword) |
-                    Q(keywords__icontains=keyword) |
-                    Q(category__icontains=keyword)
-                )
-            
-            faq_results = FAQ.objects.filter(faq_q).annotate(
-                relevance=Case(
-                    When(question__icontains=query, then=Value(10)),
-                    When(keywords__icontains=query, then=Value(8)),
-                    When(answer__icontains=query, then=Value(5)),
-                    default=Value(1),
-                    output_field=IntegerField(),
-                )
+        # Get challenges
+        challenges = CyberChallenge.objects.all()
+        for challenge in challenges:
+            text = f"{challenge.question} {challenge.description} {challenge.category}"
+            if text.strip():  # Only add non-empty documents
+                documents.append((challenge.id, 'challenge', preprocess_text(text)))
+        logger.info(f"Added {len(challenges)} challenges to corpus")
+        
+        # Get courses
+        courses = Course.objects.all()
+        for course in courses:
+            text = f"{course.title} {course.code}"
+            if text.strip():  # Only add non-empty documents
+                documents.append((course.id, 'course', preprocess_text(text)))
+        logger.info(f"Added {len(courses)} courses to corpus")
+        
+        # Get skills
+        skills = Skill.objects.all()
+        for skill in skills:
+            text = f"{skill.name} {skill.description}"
+            if text.strip():  # Only add non-empty documents
+                documents.append((skill.id, 'skill', preprocess_text(text)))
+        logger.info(f"Added {len(skills)} skills to corpus")
+        
+        # Get progress
+        progresses = Progress.objects.all()
+        for prog in progresses:
+            text = (
+                f"{prog.student.username if hasattr(prog.student, 'username') else prog.student} "
+                f"{prog.skill.name} {prog.progress}% {'completed' if prog.completed else ''}"
             )
+            if text.strip():
+                documents.append((prog.id, 'progress', preprocess_text(text)))
+        logger.info(f"Added {len(progresses)} progress records to corpus")
 
-            for result in faq_results:
-                response['results'].append({
-                    'category': 'faq',
-                    'title': result.question,
-                    'content': result.answer,
-                    'relevance_score': result.relevance
-                })
-                response['categories'].add('faq')
-        except Exception as e:
-            logger.error(f"Error searching FAQ: {str(e)}")
+        # Get contacts
+        contacts = Contact.objects.all()
+        for contact in contacts:
+            text = f"{contact.name} {contact.email} {contact.message}"
+            if text.strip():
+                documents.append((contact.id, 'contact', preprocess_text(text)))
+        logger.info(f"Added {len(contacts)} contacts to corpus")
 
-        # Search Project
-        try:
-            project_q = Q()
-            for keyword in keywords:
-                project_q |= (
-                    Q(name__icontains=keyword) |
-                    Q(description__icontains=keyword) |
-                    Q(keywords__icontains=keyword)
-                )
-            
-            project_results = Project.objects.filter(project_q).annotate(
-                relevance=Case(
-                    When(name__icontains=query, then=Value(10)),
-                    When(keywords__icontains=query, then=Value(8)),
-                    When(description__icontains=query, then=Value(5)),
-                    default=Value(1),
-                    output_field=IntegerField(),
-                )
+        # Get contact submissions
+        submissions = ContactSubmission.objects.all()
+        for sub in submissions:
+            text = f"{sub.first_name} {sub.last_name} {sub.email} {sub.message}"
+            if text.strip():
+                documents.append((sub.id, 'contactsubmission', preprocess_text(text)))
+        logger.info(f"Added {len(submissions)} contact submissions to corpus")
+
+        # Get experiences
+        experiences = Experience.objects.all()
+        for exp in experiences:
+            text = exp.feedback if hasattr(exp, 'feedback') else str(exp)
+            if text.strip():
+                documents.append((exp.id, 'experience', preprocess_text(text)))
+        logger.info(f"Added {len(experiences)} experiences to corpus")
+
+        # Get webpages
+        pages = Webpage.objects.all()
+        for page in pages:
+            text = f"{page.title} {page.url}"
+            if text.strip():
+                documents.append((page.id, 'webpage', preprocess_text(text)))
+        logger.info(f"Added {len(pages)} webpages to corpus")
+
+        # Get DDT contacts
+        ddt_contacts = DDT_contact.objects.all()
+        for ddt in ddt_contacts:
+            text = f"{ddt.name} {ddt.email} {ddt.message}"
+            if text.strip():
+                documents.append((ddt.id, 'ddt_contact', preprocess_text(text)))
+        logger.info(f"Added {len(ddt_contacts)} DDT contacts to corpus")
+
+        # Get jobs
+        jobs = Job.objects.all()
+        for job in jobs:
+            text = f"{job.title} {job.location} {job.job_type}"
+            if text.strip():
+                documents.append((job.id, 'job', preprocess_text(text)))
+        logger.info(f"Added {len(jobs)} jobs to corpus")
+
+        # Get job applications
+        apps = JobApplication.objects.all()
+        for app in apps:
+            text = f"{app.name} {getattr(app, 'email', '')} applied for {app.job.title}"
+            if text.strip():
+                documents.append((app.id, 'jobapplication', preprocess_text(text)))
+        logger.info(f"Added {len(apps)} job applications to corpus")
+
+        # Get articles
+        articles = Article.objects.all()
+        for art in articles:
+            text = f"{art.title} {getattr(art.author, 'username', '')}"
+            if text.strip():
+                documents.append((art.id, 'article', preprocess_text(text)))
+        logger.info(f"Added {len(articles)} articles to corpus")
+
+        # Get Smishing detection sign-ups
+        smishes = Smishingdetection_join_us.objects.all()
+        for sm in smishes:
+            text = f"{sm.name} {sm.email} {sm.message}"
+            if text.strip():
+                documents.append((sm.id, 'smishingdetection_join_us', preprocess_text(text)))
+        logger.info(f"Added {len(smishes)} smishing detection sign-ups to corpus")
+
+        # Get project join records
+        project_joins = Projects_join_us.objects.all()
+        for pj in project_joins:
+            text = f"{pj.name} {pj.email} {pj.page_name}"
+            if text.strip():
+                documents.append((pj.id, 'projects_join_us', preprocess_text(text)))
+        logger.info(f"Added {len(project_joins)} project join records to corpus")
+
+        # Get user challenges
+        user_chals = UserChallenge.objects.all()
+        for uc in user_chals:
+            text = (
+                f"{uc.user.username if hasattr(uc.user, 'username') else uc.user} "
+                f"{uc.challenge.question} {'completed' if uc.completed else 'not completed'}"
             )
+            if text.strip():
+                documents.append((uc.id, 'userchallenge', preprocess_text(text)))
+        logger.info(f"Added {len(user_chals)} user challenges to corpus")
 
-            for result in project_results:
-                response['results'].append({
-                    'category': 'projects',
-                    'title': result.name,
-                    'content': result.description,
-                    'relevance_score': result.relevance
-                })
-                response['categories'].add('projects')
-        except Exception as e:
-            logger.error(f"Error searching Project: {str(e)}")
+        # Get announcements
+        announcements = Announcement.objects.filter(isActive=True)
+        for ann in announcements:
+            text = ann.message
+            if text.strip():
+                documents.append((ann.id, 'announcement', preprocess_text(text)))
+        logger.info(f"Added {len(announcements)} active announcements to corpus")
 
-        # Update total results
-        response['total_results'] = len(response['results'])
+        # Get security events
+        events = SecurityEvent.objects.all()
+        for ev in events:
+            text = f"{ev.event_type} {ev.ip_address}"
+            if text.strip():
+                documents.append((ev.id, 'securityevent', preprocess_text(text)))
+        logger.info(f"Added {len(events)} security events to corpus")
+
+        # Get leaderboard entries
+        lbs = LeaderBoardTable.objects.all()
+        for lb in lbs:
+            text = f"{lb.user.username if hasattr(lb.user,'username') else lb.user} {lb.category} {lb.total_points}"
+            if text.strip():
+                documents.append((lb.id, 'leaderboard', preprocess_text(text)))
+        logger.info(f"Added {len(lbs)} leaderboard records to corpus")
         
-        # Sort results by relevance score in descending order
-        response['results'].sort(key=lambda x: (-x['relevance_score'], x.get('priority', 0)))
+        logger.info(f"Total documents in corpus: {len(documents)}")
+        return documents
+    except Exception as e:
+        logger.error(f"Error building document corpus: {str(e)}")
+        return []
+
+def build_tfidf_index():
+    """
+    Build TF-IDF index for all documents
+    Returns vectorizer and document vectors
+    """
+    logger.info("Building TF-IDF index")
+    documents = get_document_corpus()
+    
+    if not documents:
+        logger.warning("No documents found for TF-IDF indexing")
+        return None, None, None
+    
+    # Extract texts for vectorization
+    texts = [doc[2] for doc in documents]
+    
+    # Create TF-IDF vectorizer with more lenient parameters
+    vectorizer = TfidfVectorizer(
+        stop_words='english',
+        ngram_range=(1, 2),  # Use both single words and word pairs
+        min_df=1,  # Allow terms that appear in at least 1 document
+        max_df=1.0,  # Allow terms that appear in all documents
+        norm='l2'  # Normalize vectors
+    )
+    
+    try:
+        # Fit and transform documents
+        logger.info("Fitting TF-IDF vectorizer")
+        tfidf_matrix = vectorizer.fit_transform(texts)
+        logger.info(f"TF-IDF matrix shape: {tfidf_matrix.shape}")
         
-        # Convert categories set to list for JSON serialization
-        response['categories'] = list(response['categories'])
+        # Verify the matrix is not empty
+        if tfidf_matrix.shape[0] == 0 or tfidf_matrix.shape[1] == 0:
+            logger.warning("Empty TF-IDF matrix generated")
+            return None, None, None
+            
+        # Log some statistics
+        logger.info(f"Vocabulary size: {len(vectorizer.get_feature_names_out())}")
+        logger.info("TF-IDF index built successfully")
         
-        return response
+        return vectorizer, tfidf_matrix, documents
+    except Exception as e:
+        logger.error(f"Error building TF-IDF index: {str(e)}")
+        return None, None, None
+
+def search_with_tfidf(query, vectorizer, tfidf_matrix, documents, top_n=3):
+    """
+    Search using TF-IDF and cosine similarity
+    """
+    if vectorizer is None or tfidf_matrix is None or documents is None:
+        logger.warning("TF-IDF index not available, falling back to basic search")
+        return []
+    
+    try:
+        # Preprocess query
+        processed_query = preprocess_text(query)
+        logger.info(f"Processed query: {processed_query}")
+        
+        # Transform query into TF-IDF vector
+        query_vector = vectorizer.transform([processed_query])
+        logger.info(f"Query vector shape: {query_vector.shape}")
+        
+        # Calculate cosine similarity
+        similarities = cosine_similarity(query_vector, tfidf_matrix).flatten()
+        logger.info(f"Similarities shape: {similarities.shape}")
+        logger.info(f"Max similarity: {similarities.max()}, Min similarity: {similarities.min()}")
+        
+        # Get top N results
+        top_indices = similarities.argsort()[-top_n:][::-1]
+        logger.info(f"Top indices: {top_indices}")
+        
+        results = []
+        for idx in top_indices:
+            doc_id, doc_type, _ = documents[idx]
+            score = float(similarities[idx])  # Convert numpy float to Python float
+            
+            # Only include results with significant similarity
+            if score < 0.1:  # Threshold for minimum similarity
+                continue
+                
+            # Get the actual document based on type
+            try:
+                if doc_type == 'project':
+                    doc = Project.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'project',
+                        'id': doc.id,
+                        'title': doc.name,
+                        'description': doc.description,
+                        'url': f"/projects/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'challenge':
+                    doc = CyberChallenge.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'challenge',
+                        'id': doc.id,
+                        'title': doc.question,
+                        'description': doc.description,
+                        'url': f"/challenges/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'course':
+                    doc = Course.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'course',
+                        'id': doc.id,
+                        'title': doc.title,
+                        'description': doc.code,
+                        'url': f"/courses/{doc.id}/",
+                        'score': score
+                    })
+                # Additional document types
+                elif doc_type == 'faq':
+                    doc = FAQ.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'faq',
+                        'id': doc.id,
+                        'title': doc.question,
+                        'description': doc.answer,
+                        'url': f"/faqs/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'page_content':
+                    doc = PageContent.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'page_content',
+                        'id': doc.id,
+                        'title': doc.title,
+                        'description': doc.content,
+                        'url': doc.page_path,
+                        'score': score
+                    })
+                elif doc_type == 'companyinformation':
+                    doc = CompanyInformation.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'companyinformation',
+                        'id': doc.id,
+                        'title': doc.title,
+                        'description': doc.content,
+                        'url': f"/companyinformation/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'productservice':
+                    doc = ProductService.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'productservice',
+                        'id': doc.id,
+                        'title': doc.name,
+                        'description': doc.description,
+                        'url': f"/productservices/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'webpage':
+                    doc = Webpage.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'webpage',
+                        'id': doc.id,
+                        'title': doc.title,
+                        'description': doc.url,
+                        'url': doc.url,
+                        'score': score
+                    })
+                elif doc_type == 'skill':
+                    doc = Skill.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'skill',
+                        'id': doc.id,
+                        'title': doc.name,
+                        'description': doc.description,
+                        'url': f"/skills/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'progress':
+                    doc = Progress.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'progress',
+                        'id': doc.id,
+                        'title': f"Progress for {doc.student.username if hasattr(doc.student, 'username') else doc.student}",
+                        'description': f"{doc.progress}% {'complete' if doc.completed else 'incomplete'} on {doc.skill.name}",
+                        'url': f"/progress/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'contact':
+                    doc = Contact.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'contact',
+                        'id': doc.id,
+                        'title': doc.name,
+                        'description': doc.message,
+                        'url': f"/contacts/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'contactsubmission':
+                    doc = ContactSubmission.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'contactsubmission',
+                        'id': doc.id,
+                        'title': f"{doc.first_name} {doc.last_name}",
+                        'description': doc.message,
+                        'url': f"/contactsubmissions/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'experience':
+                    doc = Experience.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'experience',
+                        'id': doc.id,
+                        'title': doc.name,
+                        'description': doc.feedback,
+                        'url': f"/experiences/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'ddt_contact':
+                    doc = DDT_contact.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'ddt_contact',
+                        'id': doc.id,
+                        'title': doc.fullname,
+                        'description': doc.message,
+                        'url': f"/ddt_contacts/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'job':
+                    doc = Job.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'job',
+                        'id': doc.id,
+                        'title': doc.title,
+                        'description': f"{doc.job_type} in {doc.location}",
+                        'url': f"/jobs/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'jobapplication':
+                    doc = JobApplication.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'jobapplication',
+                        'id': doc.id,
+                        'title': doc.name,
+                        'description': doc.cover_letter,
+                        'url': f"/jobapplications/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'article':
+                    doc = Article.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'article',
+                        'id': doc.id,
+                        'title': doc.title,
+                        'description': doc.content,
+                        'url': f"/articles/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'smishingdetection_join_us':
+                    doc = Smishingdetection_join_us.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'smishingdetection_join_us',
+                        'id': doc.id,
+                        'title': doc.name,
+                        'description': doc.message,
+                        'url': f"/join/smishing/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'projects_join_us':
+                    doc = Projects_join_us.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'projects_join_us',
+                        'id': doc.id,
+                        'title': doc.name,
+                        'description': doc.message,
+                        'url': f"/join/projects/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'userchallenge':
+                    doc = UserChallenge.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'userchallenge',
+                        'id': doc.id,
+                        'title': doc.challenge.question,
+                        'description': f"Score: {doc.score}",
+                        'url': f"/userchallenges/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'announcement':
+                    doc = Announcement.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'announcement',
+                        'id': doc.id,
+                        'title': 'Announcement',
+                        'description': doc.message,
+                        'url': f"/announcements/{doc.id}/",
+                        'score': score
+                    })
+                elif doc_type == 'securityevent':
+                    doc = SecurityEvent.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'securityevent',
+                        'id': doc.id,
+                        'title': doc.event_type,
+                        'description': doc.details,
+                        'url': f"/securityevents/{doc.id}/",
+                        'score': score
+                    })  
+                elif doc_type == 'leaderboard':
+                    doc = LeaderBoardTable.objects.get(id=doc_id)
+                    results.append({
+                        'type': 'leaderboard',
+                        'id': doc.id,
+                        'title': f"{doc.user.first_name} {doc.user.last_name} ({doc.category})",
+                        'description': f"Total points: {doc.total_points}",
+                        'url': f"/leaderboards/{doc.id}/",
+                        'score': score
+                    })
+            except Exception as e:
+                logger.warning(f"Error retrieving document {doc_id} of type {doc_type}: {str(e)}")
+                continue
+        
+        logger.info(f"Found {len(results)} relevant results")
+        return results
         
     except Exception as e:
-        logger.error(f"Error in search_database: {str(e)}")
-        return {
-            'query': query,
-            'results': [],
-            'total_results': 0,
-            'categories': []
+        logger.error(f"Error in TF-IDF search: {str(e)}")
+        return []
+
+def search_model(model, query, name_field='title', desc_field='description', keywords_field=None):
+    """
+    Search a specific model for matches with the query
+    
+    Args:
+        model: Django model to search
+        query (str): The search query
+        name_field (str): Field to search for title/name matches
+        desc_field (str): Field to search for description matches
+        keywords_field (str, optional): Field containing keywords to match
+        
+    Returns:
+        list: List of search results
+    """
+    try:
+        # Build the search query
+        search_query = Q()
+        
+        # Add name field search
+        if name_field:
+            search_query |= Q(**{f"{name_field}__icontains": query})
+            
+        # Add description field search
+        if desc_field:
+            search_query |= Q(**{f"{desc_field}__icontains": query})
+            
+        # Add keywords field search if provided
+        if keywords_field:
+            search_query |= Q(**{f"{keywords_field}__icontains": query})
+            
+        # Execute the search
+        results = model.objects.filter(search_query)
+        
+        # Format results
+        formatted_results = []
+        for result in results:
+            formatted_result = {
+                'id': result.id,
+                'title': getattr(result, name_field, ''),
+                'description': getattr(result, desc_field, ''),
+                'score': calculate_relevance(
+                    f"{getattr(result, name_field, '')} {getattr(result, desc_field, '')}",
+                    [query]
+                ),
+                'type': model.__name__.lower(),
+                'url': f"/{model.__name__.lower()}s/{result.id}/"
+            }
+            formatted_results.append(formatted_result)
+            
+        return formatted_results
+        
+    except Exception as e:
+        logger.error(f"Error searching {model.__name__}: {str(e)}")
+        return []
+
+def search_database(query):
+    """
+    Search for relevant results from the database using multiple methods
+
+    Args:
+        query (str): The search query string
+
+    Returns:
+        dict: Dictionary of search results with metadata
+    """
+    start_time = time.time()
+    cleaned_query = preprocess_query(query)
+    logger.info(f"Searching database for query: '{query}' (cleaned: '{cleaned_query}')")
+    
+    # Check if this is a show more query
+    show_more_match = re.search(r'show\s+more\s+(\w+)', query.lower())
+    show_more_category = None
+    if show_more_match:
+        show_more_category = show_more_match.group(1)
+        logger.info(f"Detected 'show more' query for category: {show_more_category}")
+    
+    # Initialize results dictionary
+    results = {
+        'total_results': 0,
+        'categories': [],
+        'results': [],
+        'debug_info': {
+            'query_info': {
+                'original': query,
+                'cleaned': cleaned_query,
+                'method': 'basic_search',
+                'matched_table': None,
+                'show_more': show_more_category is not None
+            },
+            'execution_time': None
         }
+    }
+    
+    try:
+        # First check if this is a direct query for a specific model/table
+        # Map of query keywords to model names
+        model_name_map = {
+            'course': 'Course',
+            'courses': 'Course',
+            'project': 'Project',
+            'projects': 'Project',
+            'challenge': 'CyberChallenge',
+            'challenges': 'CyberChallenge',
+            'cyber challenge': 'CyberChallenge',
+            'cyber challenges': 'CyberChallenge',
+            'leaderboard': 'LeaderBoardTable',
+            'leaderboards': 'LeaderBoardTable',
+            'leader board': 'LeaderBoardTable',
+            'leader boards': 'LeaderBoardTable',
+            'job': 'Job',
+            'jobs': 'Job',
+            'career': 'Job',
+            'careers': 'Job',
+            'position': 'Job',
+            'positions': 'Job',
+            'progress': 'Progress',
+            'student progress': 'Progress',
+            'skill progress': 'Progress',
+            'contact': 'Contact',
+            'contacts': 'Contact',
+            'contact us': 'Contact',
+            'message': 'Contact',
+            'submission': 'ContactSubmission',
+            'contact submission': 'ContactSubmission',
+            'submissions': 'ContactSubmission',
+            'contact submissions': 'ContactSubmission',
+            'experience': 'Experience',
+            'experiences': 'Experience',
+            'user experience': 'Experience',
+            'feedback': 'Experience',
+            'webpage': 'Webpage',
+            'webpages': 'Webpage',
+            'page': 'Webpage',
+            'pages': 'Webpage',
+            'ddt contact': 'DDT_contact',
+            'ddt': 'DDT_contact',
+            'deakin detonator': 'DDT_contact',
+            'article': 'Article',
+            'articles': 'Article',
+            'blog': 'Article',
+            'blogs': 'Article',
+            'smishing': 'Smishingdetection_join_us',
+            'smishing detection': 'Smishingdetection_join_us',
+            'join smishing': 'Smishingdetection_join_us',
+            'join projects': 'Projects_join_us',
+            'projects join': 'Projects_join_us',
+            'user challenge': 'UserChallenge',
+            'user challenges': 'UserChallenge',
+            'announcement': 'Announcement',
+            'announcements': 'Announcement',
+            'security event': 'SecurityEvent',
+            'security events': 'SecurityEvent',
+            'events': 'SecurityEvent',
+            'skill': 'Skill',
+            'skills': 'Skill',
+            'student skill': 'Skill',
+            'learning skill': 'Skill',
+            'training skill': 'Skill'
+        }
+        
+        # Try matching on cleaned query - exact match first
+        matched_model = model_name_map.get(cleaned_query)
+        table_match_type = 'exact'
+        
+        # If no exact match, try partial matching
+        if not matched_model:
+            for key, model in model_name_map.items():
+                # Check if the cleaned query is part of a model name or vice versa
+                if key in cleaned_query or cleaned_query in key:
+                    matched_model = model
+                    table_match_type = 'partial'
+                    logger.info(f"Partial table match: '{cleaned_query}' matches '{key}' for model '{model}'")
+                    break
+        
+        # --- FORCE CHALLENGE CATEGORY FOR CHALLENGE-RELATED QUERIES ---
+        # If the query contains 'challenge' or 'challenges', force CyberChallenge model
+        if not matched_model and re.search(r'challenge', cleaned_query):
+            matched_model = 'CyberChallenge'
+            table_match_type = 'forced_challenge_keyword'
+            logger.info(f"Forcing CyberChallenge model for query containing 'challenge': '{cleaned_query}'")
+        # --- END FORCE ---
+        
+        # If this is a show more query and we have a category, use that to determine the model
+        if show_more_category and not matched_model:
+            # Map the category name to model name
+            category_to_model = {
+                'courses': 'Course',
+                'course': 'Course',
+                'projects': 'Project', 
+                'project': 'Project',
+                'challenges': 'CyberChallenge',
+                'challenge': 'CyberChallenge',
+                'jobs': 'Job',
+                'job': 'Job',
+                'skills': 'Skill',
+                'skill': 'Skill',
+                'progress': 'Progress',
+                'contacts': 'Contact',
+                'contact': 'Contact',
+                'experiences': 'Experience',
+                'experience': 'Experience',
+                'articles': 'Article',
+                'article': 'Article',
+                'announcements': 'Announcement',
+                'announcement': 'Announcement',
+                'leaderboards': 'LeaderBoardTable',
+                'leaderboard': 'LeaderBoardTable'
+            }
+            
+            matched_model = category_to_model.get(show_more_category.lower())
+            if matched_model:
+                logger.info(f"Show more query matched category '{show_more_category}' to model '{matched_model}'")
+                table_match_type = 'show_more'
+                results['debug_info']['query_info']['method'] = 'show_more'
+        
+        # If we found a direct model match, query that model directly
+        if matched_model:
+            logger.info(f"Found {table_match_type} table match for query '{cleaned_query}' to model: {matched_model}")
+            results['debug_info']['query_info']['method'] = 'direct_table_match' if table_match_type != 'show_more' else 'show_more'
+            results['debug_info']['query_info']['matched_table'] = matched_model
+            
+            # Determine the result limit based on whether this is a show more query
+            limit = 6 if table_match_type == 'show_more' else 3  # Show more: 6 results, regular: 3 results
+            offset = 3 if table_match_type == 'show_more' else 0  # Show more: skip first 3, regular: start from beginning
+            
+            if matched_model == 'Course':
+                # Check for numeric ID lookup (e.g., 'course 444')
+                id_match = re.search(r"\b(\d+)\b", cleaned_query)
+                if id_match:
+                    try:
+                        cid = int(id_match.group(1))
+                        rec = Course.objects.get(id=cid)
+                        # Return only this course
+                        results['results'] = [{
+                            'id': rec.id,
+                            'title': rec.title,
+                            'description': rec.code,
+                            'type': 'course',
+                            'url': f"/courses/{rec.id}/"
+                        }]
+                        results['categories'] = ['courses']
+                        results['total_results'] = 1
+                        results['debug_info']['query_info']['method'] = 'id_lookup'
+                        results['debug_info']['execution_time'] = time.time() - start_time
+                        return results
+                    except Course.DoesNotExist:
+                        pass
+                if table_match_type == 'show_more':
+                    # For "show more" queries, skip the first 3 records
+                    recent_records = Course.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Course.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent Course records (offset={offset}, limit={limit})")
+                
+                # Format course results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.title,
+                        'description': f"Course Code: {record.code}",
+                        'score': 100,  # High score for direct matches
+                        'type': 'course',
+                        'url': f"/courses/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('courses')
+                
+            elif matched_model == 'Project':
+                if table_match_type == 'show_more':
+                    recent_records = Project.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Project.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent Project records (offset={offset}, limit={limit})")
+                
+                # Format project results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.name,
+                        'description': record.description,
+                        'score': 100,  # High score for direct matches
+                        'type': 'project',
+                        'url': f"/projects/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('projects')
+                
+            elif matched_model == 'CyberChallenge':
+                # Retrieve all challenges so the engine finds all results
+                recent_records = CyberChallenge.objects.all().order_by('-id')
+
+                logger.info(f"Retrieved {len(recent_records)} recent CyberChallenge records (offset={offset}, limit={limit})")
+
+                # Format challenge results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.question,  # Use the question field for challenge prompt
+                        'description': record.description,
+                        'difficulty': record.difficulty.title() if hasattr(record, 'difficulty') and record.difficulty else 'Medium',
+                        'points': record.points if hasattr(record, 'points') else 0,
+                    }
+                    results['challenges'] = results.get('challenges', [])
+                    results['challenges'].append(result)
+
+                if recent_records:
+                    results['categories'].append('challenges')
+
+                # Early return for CyberChallenge direct matches
+                results['results'] = results.get('challenges', [])
+                results['total_results'] = len(results['results'])
+                results['debug_info']['execution_time'] = time.time() - start_time
+                logger.info(f"Returning CyberChallenge direct match results: {results['total_results']} items")
+                return results
+            
+            elif matched_model == 'LeaderBoardTable':
+                if table_match_type == 'show_more':
+                    recent_records = LeaderBoardTable.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = LeaderBoardTable.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent LeaderBoardTable records (offset={offset}, limit={limit})")
+                
+                # Format leaderboard results
+                for record in recent_records:
+                    # Create a title using the ID since LeaderBoardTable might not have a title field
+                    title = f"Leaderboard {record.id}"
+                    
+                    # Try to get entries count if possible
+                    description = "Leaderboard details"
+                    try:
+                        entries_count = getattr(record, 'entries_count', None)
+                        if entries_count is not None:
+                            description = f"Entries: {entries_count}"
+                    except AttributeError:
+                        pass
+                    
+                    result = {
+                        'id': record.id,
+                        'title': title,
+                        'description': description,
+                        'score': 100,  # High score for direct matches
+                        'type': 'leaderboard',
+                        'url': f"/leaderboards/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('leaderboards')
+                    
+            elif matched_model == 'Job':
+                # Get open jobs (where closing_date is in the future or None)
+                from django.utils import timezone
+                today = timezone.now().date()
+                
+                # Get jobs that are either still open or have no closing date
+                job_query = Q(closing_date__gte=today) | Q(closing_date__isnull=True)
+                
+                if table_match_type == 'show_more':
+                    recent_records = Job.objects.filter(job_query).order_by('-posted_date')[offset:offset+limit]
+                else:
+                    recent_records = Job.objects.filter(job_query).order_by('-posted_date')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} open Job records (offset={offset}, limit={limit})")
+                
+                # Format job results
+                for record in recent_records:
+                    job_type = getattr(record, 'job_type', 'Not specified')
+                    location = getattr(record, 'location', 'Not specified')
+                    
+                    result = {
+                        'id': record.id,
+                        'title': record.title,
+                        'description': f"{job_type} in {location}",
+                        'score': 100,  # High score for direct matches
+                        'type': 'job',
+                        'url': f"/jobs/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('jobs')
+            
+            elif matched_model == 'Progress':
+                if table_match_type == 'show_more':
+                    recent_records = Progress.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Progress.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent Progress records (offset={offset}, limit={limit})")
+                
+                # Format progress results
+                for record in recent_records:
+                    student_name = getattr(record.student, 'username', str(record.student)) if hasattr(record, 'student') else 'Student'
+                    skill_name = getattr(record.skill, 'name', 'Skill') if hasattr(record, 'skill') else 'Skill'
+                    
+                    result = {
+                        'id': record.id,
+                        'title': f"Progress for {student_name}",
+                        'description': f"{record.progress}% {'completed' if record.completed else 'in progress'} on {skill_name}",
+                        'score': 100,  # High score for direct matches
+                        'type': 'progress',
+                        'url': f"/progress/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('progress')
+                    
+            elif matched_model == 'Contact':
+                if table_match_type == 'show_more':
+                    recent_records = Contact.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Contact.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent Contact records (offset={offset}, limit={limit})")
+                
+                # Format contact results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.name,
+                        'description': record.message,
+                        'score': 100,  # High score for direct matches
+                        'type': 'contact',
+                        'url': f"/contacts/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('contacts')
+                    
+            elif matched_model == 'ContactSubmission':
+                if table_match_type == 'show_more':
+                    recent_records = ContactSubmission.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = ContactSubmission.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent ContactSubmission records (offset={offset}, limit={limit})")
+                
+                # Format contact submission results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': f"{record.first_name} {record.last_name}",
+                        'description': record.message,
+                        'score': 100,  # High score for direct matches
+                        'type': 'contactsubmission',
+                        'url': f"/contactsubmissions/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('contactsubmissions')
+                    
+            elif matched_model == 'Experience':
+                if table_match_type == 'show_more':
+                    recent_records = Experience.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Experience.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent Experience records (offset={offset}, limit={limit})")
+                
+                # Format experience results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.name if hasattr(record, 'name') else "User Experience",
+                        'description': record.feedback if hasattr(record, 'feedback') else str(record),
+                        'score': 100,  # High score for direct matches
+                        'type': 'experience',
+                        'url': f"/experiences/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('experiences')
+                    
+            elif matched_model == 'Webpage':
+                if table_match_type == 'show_more':
+                    recent_records = Webpage.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Webpage.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent Webpage records (offset={offset}, limit={limit})")
+                
+                # Format webpage results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.title,
+                        'description': record.url,
+                        'score': 100,  # High score for direct matches
+                        'type': 'webpage',
+                        'url': record.url
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('webpages')
+                    
+            elif matched_model == 'DDT_contact':
+                if table_match_type == 'show_more':
+                    recent_records = DDT_contact.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = DDT_contact.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent DDT_contact records (offset={offset}, limit={limit})")
+                
+                # Format DDT contact results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.fullname,
+                        'description': record.message,
+                        'score': 100,  # High score for direct matches
+                        'type': 'ddt_contact',
+                        'url': f"/ddt_contacts/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('ddt_contacts')
+                    
+            elif matched_model == 'Article':
+                if table_match_type == 'show_more':
+                    recent_records = Article.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Article.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent Article records (offset={offset}, limit={limit})")
+                
+                # Format article results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.title,
+                        'description': record.content[:150] + "..." if len(record.content) > 150 else record.content,
+                        'score': 100,  # High score for direct matches
+                        'type': 'article',
+                        'url': f"/articles/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('articles')
+                    
+            elif matched_model == 'Smishingdetection_join_us':
+                if table_match_type == 'show_more':
+                    recent_records = Smishingdetection_join_us.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Smishingdetection_join_us.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent Smishingdetection_join_us records (offset={offset}, limit={limit})")
+                
+                # Format smishing join results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.name,
+                        'description': record.message,
+                        'score': 100,  # High score for direct matches
+                        'type': 'smishingdetection_join_us',
+                        'url': f"/join/smishing/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('smishingdetection_join_us')
+                    
+            elif matched_model == 'Projects_join_us':
+                if table_match_type == 'show_more':
+                    recent_records = Projects_join_us.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Projects_join_us.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent Projects_join_us records (offset={offset}, limit={limit})")
+                
+                # Format projects join results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.name,
+                        'description': f"Page: {record.page_name}" + (f" - {record.message}" if record.message else ""),
+                        'score': 100,  # High score for direct matches
+                        'type': 'projects_join_us',
+                        'url': f"/join/projects/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('projects_join_us')
+                    
+            elif matched_model == 'UserChallenge':
+                if table_match_type == 'show_more':
+                    recent_records = UserChallenge.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = UserChallenge.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent UserChallenge records (offset={offset}, limit={limit})")
+                
+                # Format user challenge results
+                for record in recent_records:
+                    user_name = getattr(record.user, 'username', str(record.user)) if hasattr(record, 'user') else 'User'
+                    challenge_title = getattr(record.challenge, 'question', 'Challenge') if hasattr(record, 'challenge') else 'Challenge'
+                    
+                    result = {
+                        'id': record.id,
+                        'title': challenge_title,
+                        'description': f"User: {user_name}, Score: {getattr(record, 'score', 'N/A')}, {'Completed' if getattr(record, 'completed', False) else 'In Progress'}",
+                        'score': 100,  # High score for direct matches
+                        'type': 'userchallenge',
+                        'url': f"/userchallenges/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('userchallenges')
+                    
+            elif matched_model == 'Announcement':
+                if table_match_type == 'show_more':
+                    recent_records = Announcement.objects.filter(isActive=True).order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Announcement.objects.filter(isActive=True).order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent active Announcement records (offset={offset}, limit={limit})")
+                
+                # Format announcement results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': 'Announcement',
+                        'description': record.message,
+                        'score': 100,  # High score for direct matches
+                        'type': 'announcement',
+                        'url': f"/announcements/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('announcements')
+                    
+            elif matched_model == 'SecurityEvent':
+                if table_match_type == 'show_more':
+                    recent_records = SecurityEvent.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = SecurityEvent.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent SecurityEvent records (offset={offset}, limit={limit})")
+                
+                # Format security event results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.event_type,
+                        'description': getattr(record, 'details', f"IP: {getattr(record, 'ip_address', 'Unknown')}"),
+                        'score': 100,  # High score for direct matches
+                        'type': 'securityevent',
+                        'url': f"/securityevents/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('securityevents')
+                    
+            elif matched_model == 'Skill':
+                if table_match_type == 'show_more':
+                    recent_records = Skill.objects.all().order_by('-id')[offset:offset+limit]
+                else:
+                    recent_records = Skill.objects.all().order_by('-id')[:limit]
+                    
+                logger.info(f"Retrieved {len(recent_records)} recent Skill records (offset={offset}, limit={limit})")
+                
+                # Format skill results
+                for record in recent_records:
+                    result = {
+                        'id': record.id,
+                        'title': record.name,
+                        'description': record.description,
+                        'score': 100,  # High score for direct matches
+                        'type': 'skill',
+                        'url': f"/skills/{record.id}/"
+                    }
+                    results['results'].append(result)
+                    
+                if recent_records:
+                    results['categories'].append('skills')
+
+            # Add show_more info to results to help format_search_results
+            if table_match_type == 'show_more':
+                results['show_more'] = True
+                results['show_more_category'] = show_more_category
+            
+            # If we got results from a direct table match or show more, return them
+            if results['results']:
+                results['total_results'] = len(results['results'])
+                logger.info(f"{table_match_type} match found {results['total_results']} results from {matched_model}")
+                results['debug_info']['execution_time'] = time.time() - start_time
+                return results
+        
+        # If no direct table match or no results from direct match, try TF-IDF search first
+        logger.info("No direct table match, trying TF-IDF search")
+        try:
+            documents, vectorizer, tfidf_matrix = build_tfidf_index()
+            tfidf_results = search_with_tfidf(cleaned_query, vectorizer, tfidf_matrix, documents)
+            
+            if tfidf_results:
+                results['debug_info']['query_info']['method'] = 'tfidf_search'
+                # Start with TF-IDF matches
+                combined = list(tfidf_results)
+                # Also include any direct Skill matches
+                skill_results = search_model(Skill, cleaned_query, name_field='name', desc_field='description')
+                if skill_results:
+                    combined.extend(skill_results)
+                # Assign combined results
+                results['results'] = combined
+                results['total_results'] = len(combined)
+                # Extract categories from all results
+                categories = set()
+                for res in combined:
+                    typ = res.get('type')
+                    if typ:
+                        categories.add(f"{typ}s")
+                results['categories'] = list(categories)
+                logger.info(f"TF-IDF search found {results['total_results']} results (including skills)")
+                results['debug_info']['execution_time'] = time.time() - start_time
+                return results
+        except Exception as e:
+            logger.warning(f"TF-IDF search failed: {str(e)}. Falling back to basic search.")
+        
+        # Fall back to basic search if TF-IDF fails or finds no results
+        logger.info("Attempting basic search")
+        results['debug_info']['query_info']['method'] = 'basic_search'
+        
+        # Search in Project model
+        project_results = search_model(Project, cleaned_query, 
+                               name_field='name', 
+                               desc_field='description',
+                               keywords_field='keywords')
+        
+        # Search in CyberChallenge model
+        challenge_results = search_model(CyberChallenge, cleaned_query,
+                                 name_field='question',
+                                 desc_field='description',
+                                 keywords_field='category')
+        
+        # Search in Course model
+        course_results = search_model(Course, cleaned_query,    
+                              name_field='title',
+                              desc_field='code')
+        # Search in Skill model
+        skill_results = search_model(Skill, cleaned_query,
+                             name_field='name',
+                             desc_field='description')
+                              
+        # Search in LeaderBoardTable model
+        leaderboard_results = search_model(LeaderBoardTable, cleaned_query,
+                                  name_field='id',  # Using ID as name since it might not have a name field
+                                  desc_field=None)  # No description field assumed
+                                    
+        # Search in Job model
+        job_results = []
+        try:
+            from django.utils import timezone
+            today = timezone.now().date()
+            
+            # Build job query for title, location, and job_type matching
+            job_query = (
+                Q(title__icontains=cleaned_query) |
+                Q(location__icontains=cleaned_query) |
+                Q(job_type__icontains=cleaned_query)
+            )
+            
+            # Only show open jobs (closing date in future or null)
+            open_jobs_filter = Q(closing_date__gte=today) | Q(closing_date__isnull=True)
+            matching_jobs = Job.objects.filter(job_query & open_jobs_filter).distinct()
+            
+            logger.info(f"Found {matching_jobs.count()} matching jobs")
+            
+            for job in matching_jobs:
+                # Calculate relevance score
+                job_text = f"{job.title} {job.location} {job.job_type}"
+                relevance_score = calculate_relevance(job_text, extract_general_keywords(cleaned_query))
+                
+                job_results.append({
+                    'id': job.id,
+                    'title': job.title,
+                    'description': f"{job.job_type} in {job.location}",
+                    'score': relevance_score,
+                    'type': 'job',
+                    'url': f"/jobs/{job.id}/"
+                })
+        except Exception as e:
+            logger.error(f"Error searching jobs: {str(e)}")
+        
+        # Combine all results
+        all_results = []
+        if project_results:
+            all_results.extend(project_results)
+            results['categories'].append('projects')
+        
+        if challenge_results:
+            all_results.extend(challenge_results)
+            results['categories'].append('challenges')
+        
+        if course_results:
+            all_results.extend(course_results)
+            results['categories'].append('courses')
+        if skill_results:
+            all_results.extend(skill_results)
+            results['categories'].append('skills')
+        
+        if leaderboard_results:
+            all_results.extend(leaderboard_results)
+            results['categories'].append('leaderboards')
+            
+        if job_results:
+            all_results.extend(job_results)
+            results['categories'].append('jobs')
+        
+        # Sort results by relevance score
+        all_results.sort(key=lambda x: -x.get('score', 0))
+        
+        results['results'] = all_results
+        results['total_results'] = len(all_results)
+        
+        # Check for spelling errors in the query
+        if len(all_results) == 0:
+            corrected_query = correct_spelling(cleaned_query)
+            if corrected_query != cleaned_query:
+                logger.info(f"No results found. Trying spelling correction: {corrected_query}")
+                results['corrected_query'] = corrected_query
+                corrected_results = search_database(corrected_query)
+                
+                # Merge results
+                if corrected_results['total_results'] > 0:
+                    results['results'] = corrected_results['results']
+                    results['categories'] = corrected_results['categories']
+                    results['total_results'] = corrected_results['total_results']
+                    results['debug_info']['query_info']['corrected'] = corrected_query
+        
+        logger.info(f"Search completed with {results['total_results']} results in {time.time() - start_time:.2f}s")
+        results['debug_info']['execution_time'] = time.time() - start_time
+        return results
+        
+    except Exception as e:
+        error_msg = f"Error during search: {str(e)}"
+        logger.error(error_msg)
+        results['error'] = error_msg
+        results['debug_info']['execution_time'] = time.time() - start_time
+        return results
 
 def rank_results(results, query, keywords):
     """
@@ -387,37 +1648,38 @@ def rank_results(results, query, keywords):
 
 def get_relevance_score(item, query, keywords, item_type):
     """
-    Calculate relevance score for a result item
+    Calculate relevance score for an item based on query and keywords
     
     Args:
-        item: The database item
-        query (str): The user query
-        keywords (list): Keywords extracted from the query
-        item_type (str): Type of item (category from results dict)
+        item: The item to score
+        query (str): Original query
+        keywords (list): Keywords extracted from query
+        item_type (str): Type of item being scored
         
     Returns:
-        float: Relevance score (higher is more relevant)
+        int: Relevance score
     """
+    logger.debug(f"Calculating relevance score for {item_type} item")
     score = 0
     
     try:
         # Different scoring based on item type
         if item_type == 'page_content':
             # Title match is most important
-            if hasattr(item, 'title') and any(keyword in item.title.lower() for keyword in keywords):
+            if hasattr(item, 'title') and any(keyword.lower() in item.title.lower() for keyword in keywords):
                 score += 5
             
             # Keyword field match is next most important
             if hasattr(item, 'keywords') and item.keywords:
                 item_keywords = item.keywords.lower().split(',')
                 for keyword in keywords:
-                    if any(keyword in kw for kw in item_keywords):
+                    if any(keyword.lower() in kw.lower() for kw in item_keywords):
                         score += 3
             
             # Content match is least important but still counts
             if hasattr(item, 'content'):
                 for keyword in keywords:
-                    if keyword in item.content.lower():
+                    if keyword.lower() in item.content.lower():
                         score += 1
             
             # Boost by priority field
@@ -425,170 +1687,282 @@ def get_relevance_score(item, query, keywords, item_type):
             
         elif item_type == 'faqs':
             # Question match is most important
-            if hasattr(item, 'question') and any(keyword in item.question.lower() for keyword in keywords):
+            if hasattr(item, 'question') and any(keyword.lower() in item.question.lower() for keyword in keywords):
                 score += 5
             
             # Keyword field match
             if hasattr(item, 'keywords') and item.keywords:
                 item_keywords = item.keywords.lower().split(',')
                 for keyword in keywords:
-                    if any(keyword in kw for kw in item_keywords):
+                    if any(keyword.lower() in kw.lower() for kw in item_keywords):
                         score += 3
             
             # Category match
-            if hasattr(item, 'category') and any(keyword in item.category.lower() for keyword in keywords):
+            if hasattr(item, 'category') and any(keyword.lower() in item.category.lower() for keyword in keywords):
                 score += 2
                     
         elif item_type == 'challenges':
             # Title match is most important
-            if hasattr(item, 'title') and any(keyword in item.title.lower() for keyword in keywords):
+            if hasattr(item, 'title') and any(keyword.lower() in item.title.lower() for keyword in keywords):
                 score += 5
             
             # Category match
-            if hasattr(item, 'category') and any(keyword in item.category.lower() for keyword in keywords):
+            if hasattr(item, 'category') and any(keyword.lower() in item.category.lower() for keyword in keywords):
                 score += 3
             
             # Description match
             if hasattr(item, 'description'):
                 for keyword in keywords:
-                    if keyword in item.description.lower():
+                    if keyword.lower() in item.description.lower():
                         score += 1
                     
         elif item_type == 'projects':
-            # Name match is most important
-            if hasattr(item, 'name') and any(keyword in item.name.lower() for keyword in keywords):
+            # Name/title match is most important
+            if hasattr(item, 'title') and any(keyword.lower() in item.title.lower() for keyword in keywords):
                 score += 5
+            # Use get_title_display if available to check the display value
+            if hasattr(item, 'get_title_display'):
+                display_title = item.get_title_display()
+                if any(keyword.lower() in display_title.lower() for keyword in keywords):
+                    score += 5
                 
             # Description match
             if hasattr(item, 'description'):
                 for keyword in keywords:
-                    if keyword in item.description.lower():
+                    if keyword.lower() in item.description.lower():
                         score += 2
                     
-            # Status match
-            if hasattr(item, 'status') and any(keyword in item.status.lower() for keyword in keywords):
-                score += 1
-                
-            # Keywords match
-            if hasattr(item, 'keywords') and item.keywords:
-                item_keywords = item.keywords.lower().split(',')
-                for keyword in keywords:
-                    if any(keyword in kw for kw in item_keywords):
-                        score += 3
-                        
         elif item_type == 'courses':
-            # Name match is most important
-            if hasattr(item, 'name') and any(keyword in item.name.lower() for keyword in keywords):
+            # Title match is most important
+            if hasattr(item, 'title') and any(keyword.lower() in item.title.lower() for keyword in keywords):
                 score += 5
                 
-            # Description match
-            if hasattr(item, 'description'):
-                for keyword in keywords:
-                    if keyword in item.description.lower():
-                        score += 2
-                        
-            # Category match
-            if hasattr(item, 'category') and any(keyword in item.category.lower() for keyword in keywords):
-                score += 3
+            # Code match is also important
+            if hasattr(item, 'code') and any(keyword.lower() in item.code.lower() for keyword in keywords):
+                score += 4
                 
         elif item_type == 'skills':
             # Name match is most important
-            if hasattr(item, 'name') and any(keyword in item.name.lower() for keyword in keywords):
+            if hasattr(item, 'name') and any(keyword.lower() in item.name.lower() for keyword in keywords):
                 score += 5
                 
             # Description match
             if hasattr(item, 'description'):
                 for keyword in keywords:
-                    if keyword in item.description.lower():
+                    if keyword.lower() in item.description.lower():
                         score += 2
                         
-            # Category match
-            if hasattr(item, 'category') and any(keyword in item.category.lower() for keyword in keywords):
+            # Slug match
+            if hasattr(item, 'slug') and any(keyword.lower() in item.slug.lower() for keyword in keywords):
                 score += 3
                 
         elif item_type == 'jobs':
             # Title match is most important
-            if hasattr(item, 'title') and any(keyword in item.title.lower() for keyword in keywords):
+            if hasattr(item, 'title') and any(keyword.lower() in item.title.lower() for keyword in keywords):
                 score += 5
                 
             # Description match
             if hasattr(item, 'description'):
                 for keyword in keywords:
-                    if keyword in item.description.lower():
+                    if keyword.lower() in item.description.lower():
                         score += 2
                         
             # Location and job_type match
-            if hasattr(item, 'location') and any(keyword in item.location.lower() for keyword in keywords):
+            if hasattr(item, 'location') and any(keyword.lower() in item.location.lower() for keyword in keywords):
                 score += 3
                 
-            if hasattr(item, 'job_type') and any(keyword in item.job_type.lower() for keyword in keywords):
+            if hasattr(item, 'job_type') and any(keyword.lower() in item.job_type.lower() for keyword in keywords):
                 score += 3
                 
         elif item_type == 'articles':
             # Title match is most important
-            if hasattr(item, 'title') and any(keyword in item.title.lower() for keyword in keywords):
+            if hasattr(item, 'title') and any(keyword.lower() in item.title.lower() for keyword in keywords):
                 score += 5
                 
             # Content match
             if hasattr(item, 'content'):
                 for keyword in keywords:
-                    if keyword in item.content.lower():
+                    if keyword.lower() in item.content.lower():
                         score += 2
-                        
-            # Category and tags match
-            if hasattr(item, 'category') and any(keyword in item.category.lower() for keyword in keywords):
-                score += 3
-                
-            if hasattr(item, 'tags') and item.tags:
-                item_tags = item.tags.lower().split(',')
-                for keyword in keywords:
-                    if any(keyword in tag for tag in item_tags):
-                        score += 3
                         
         elif item_type == 'announcements':
             # Message match
             if hasattr(item, 'message'):
                 for keyword in keywords:
-                    if keyword in item.message.lower():
+                    if keyword.lower() in item.message.lower():
                         score += 3
                     
-            # Recent announcements get higher score
-            if hasattr(item, 'created_at'):
-                # This is a simplistic approach - you might want to use actual date comparison
-                score += 2
-                
         elif item_type == 'experiences':
             # Name match
-            if hasattr(item, 'name') and any(keyword in item.name.lower() for keyword in keywords):
+            if hasattr(item, 'name') and any(keyword.lower() in item.name.lower() for keyword in keywords):
                 score += 3
                 
             # Feedback match
             if hasattr(item, 'feedback'):
                 for keyword in keywords:
-                    if keyword in item.feedback.lower():
+                    if keyword.lower() in item.feedback.lower():
                         score += 2
                         
-        elif item_type == 'contact_info' or item_type == 'join_requests':
-            # Generic scoring for these categories
+        elif item_type == 'contact_info':
             # Name match
-            if hasattr(item, 'name') and any(keyword in item.name.lower() for keyword in keywords):
+            if hasattr(item, 'name') and any(keyword.lower() in item.name.lower() for keyword in keywords):
+                score += 3
+            elif hasattr(item, 'fullname') and any(keyword.lower() in item.fullname.lower() for keyword in keywords):
                 score += 3
                 
-            # Subject match
-            if hasattr(item, 'subject') and any(keyword in item.subject.lower() for keyword in keywords):
-                score += 4
+            # Email match
+            if hasattr(item, 'email') and any(keyword.lower() in item.email.lower() for keyword in keywords):
+                score += 2
                 
             # Message match
             if hasattr(item, 'message'):
                 for keyword in keywords:
-                    if keyword in item.message.lower():
+                    if keyword.lower() in item.message.lower():
                         score += 1
+                        
+        elif item_type == 'join_requests':
+            # Name match
+            if hasattr(item, 'name') and any(keyword.lower() in item.name.lower() for keyword in keywords):
+                score += 3
+                
+            # Email match
+            if hasattr(item, 'email') and any(keyword.lower() in item.email.lower() for keyword in keywords):
+                score += 2
+                
+            # Message match
+            if hasattr(item, 'message'):
+                for keyword in keywords:
+                    if keyword.lower() in item.message.lower():
+                        score += 1
+                        
+            # Page name match (for Projects_join_us)
+            if hasattr(item, 'page_name') and any(keyword.lower() in item.page_name.lower() for keyword in keywords):
+                score += 3
     except Exception as e:
         logger.error(f"Error calculating relevance score for {item_type}: {str(e)}")
         # Return a minimal score so it still appears in results
         score = 0.1
     
+    logger.debug(f"Final relevance score for {item_type}: {score}")
     return score
+
+def spell_correct(query):
+    """
+    Attempt to correct spelling errors in the query
+    
+    Args:
+        query (str): The user's query
+        
+    Returns:
+        str: Corrected query
+        bool: Whether correction was made
+    """
+    logger.info(f"Starting spell correction for query: '{query}'")
+    # Create a vocabulary from project keywords
+    vocabulary = []
+    
+    # Add project names
+    try:
+        projects = Project.objects.all()
+        logger.debug(f"Building vocabulary from {len(projects)} projects")
+        for project in projects:
+            if project.name:
+                vocabulary.append(project.name.lower())
+            if project.keywords:
+                keywords = [k.strip().lower() for k in project.keywords.split(',')]
+                vocabulary.extend(keywords)
+                logger.debug(f"Added project '{project.name}' with keywords: {keywords}")
+    except Exception as e:
+        logger.warning(f"Error getting project vocabulary: {str(e)}")
+    
+    # Add challenge questions and categories
+    try:
+        challenges = CyberChallenge.objects.all()
+        logger.debug(f"Adding {len(challenges)} challenges to vocabulary")
+        for challenge in challenges:
+            if challenge.question:
+                vocabulary.append(challenge.question.lower())
+            if challenge.category:
+                vocabulary.append(challenge.category.lower())
+    except Exception as e:
+        logger.warning(f"Error getting challenge vocabulary: {str(e)}")
+    
+    # Add course titles and codes
+    try:
+        courses = Course.objects.all()
+        logger.debug(f"Adding {len(courses)} courses to vocabulary")
+        for course in courses:
+            if course.title:
+                vocabulary.append(course.title.lower())
+            if course.code:
+                vocabulary.append(course.code.lower())
+    except Exception as e:
+        logger.warning(f"Error getting course vocabulary: {str(e)}")
+    
+    # Add common domain-specific terms
+    domain_terms = [
+        'security', 'cyber', 'cyberattack', 'cybersecurity', 'attack', 'defense',
+        'vulnerability', 'exploit', 'malware', 'virus', 'trojan', 'ransomware',
+        'phishing', 'smishing', 'authentication', 'authorization', 'encryption',
+        'decryption', 'penetration', 'testing', 'pentest', 'hacking', 'ethical',
+        'firewall', 'intrusion', 'detection', 'prevention', 'deakin', 'university',
+        'course', 'project', 'challenge', 'ctf', 'capture', 'flag'
+    ]
+    vocabulary.extend(domain_terms)
+    logger.debug(f"Added {len(domain_terms)} domain-specific terms to vocabulary")
+    
+    # Create a unique vocabulary
+    vocabulary = list(set(vocabulary))
+    logger.info(f"Total vocabulary size: {len(vocabulary)}")
+    if len(vocabulary) > 0:
+        logger.debug(f"Sample vocabulary items: {vocabulary[:10]}...")
+    
+    # Split the query into words and try to correct each word
+    words = query.split()
+    corrected_words = []
+    was_corrected = False
+    
+    logger.info(f"Processing {len(words)} words from query")
+    for i, word in enumerate(words):
+        logger.debug(f"Word {i+1}: '{word}'")
+        # Only try to correct words longer than 3 characters
+        if len(word) <= 3:
+            logger.debug(f"  Skipping '{word}' (too short)")
+            corrected_words.append(word)
+            continue
+            
+        # Skip stopwords
+        if word.lower() in STOPWORDS:
+            logger.debug(f"  Skipping '{word}' (stopword)")
+            corrected_words.append(word)
+            continue
+            
+        # Find closest matches in vocabulary
+        cutoff = 0.7  # Match threshold
+        matches = difflib.get_close_matches(word.lower(), vocabulary, n=3, cutoff=cutoff)
+        
+        if matches:
+            # Found a close match
+            best_match = matches[0]
+            match_score = difflib.SequenceMatcher(None, word.lower(), best_match).ratio()
+            logger.debug(f"  Found matches for '{word}': {matches}")
+            logger.debug(f"  Best match: '{best_match}' with score {match_score:.2f}")
+            
+            if best_match != word.lower():
+                was_corrected = True
+                logger.info(f"  Corrected '{word}' to '{best_match}' (score: {match_score:.2f})")
+                corrected_words.append(best_match)
+            else:
+                logger.debug(f"  No correction needed for '{word}' (exact match in vocabulary)")
+                corrected_words.append(word)
+        else:
+            logger.debug(f"  No matches found for '{word}' above threshold {cutoff}")
+            corrected_words.append(word)
+    
+    corrected_query = ' '.join(corrected_words)
+    logger.info(f"Spell correction complete - Original: '{query}', Corrected: '{corrected_query}', Was corrected: {was_corrected}")
+    
+    return corrected_query, was_corrected
 
 def process_query(query):
     """
@@ -600,12 +1974,64 @@ def process_query(query):
     Returns:
         dict: Formatted search results
     """
+    logger.info(f"\n{'='*50}\nProcessing query: '{query}'")
     try:
+        # Check if this is a "show more" query
+        show_more_match = re.search(r'show\s+more\s+(\w+)', query.lower())
+        if show_more_match:
+            category_name = show_more_match.group(1)
+            logger.info(f"Detected 'show more' query for category: {category_name}")
+            
+            # Map the category name to model name
+            category_to_model = {
+                'courses': 'Course',
+                'course': 'Course',
+                'projects': 'Project', 
+                'project': 'Project',
+                'challenges': 'CyberChallenge',
+                'challenge': 'CyberChallenge',
+                'jobs': 'Job',
+                'job': 'Job',
+                'skills': 'Skill',
+                'skill': 'Skill',
+                'progress': 'Progress',
+                'contacts': 'Contact',
+                'contact': 'Contact',
+                'experiences': 'Experience',
+                'experience': 'Experience',
+                'articles': 'Article',
+                'article': 'Article',
+                'announcements': 'Announcement',
+                'announcement': 'Announcement',
+                'leaderboards': 'LeaderBoardTable',
+                'leaderboard': 'LeaderBoardTable'
+            }
+            
+            model_name = category_to_model.get(category_name.lower())
+            
+            if model_name:
+                logger.info(f"Matched category '{category_name}' to model '{model_name}'")
+                # Create a result with special flag for show more
+                return {
+                    'query': query,
+                    'show_more': True,
+                    'model_name': model_name,
+                    'category_name': category_name
+                }
+        
+        # If not a show more query, continue with regular processing
+        # Try to correct spelling in the query
+        corrected_query, was_corrected = spell_correct(query)
+        
         # Preprocess the query
-        processed_query = preprocess_query(query)
+        processed_query = preprocess_query(corrected_query)
+        logger.info(f"Preprocessed query: '{processed_query}'")
+        
         if not processed_query:
+            logger.warning("Empty processed query")
             return {
                 'query': query,
+                'corrected_query': corrected_query if was_corrected else None,
                 'results': [],
                 'total_results': 0,
                 'categories': []
@@ -614,24 +2040,28 @@ def process_query(query):
         # Extract keywords
         general_keywords = extract_general_keywords(processed_query)
         project_keywords = extract_project_keywords(processed_query)
+        logger.info(f"Extracted keywords - General: {general_keywords}, Project: {project_keywords}")
         
         # If no valid keywords found, return empty results
         if not general_keywords and not project_keywords:
+            logger.warning("No valid keywords found after extraction")
             return {
                 'query': query,
+                'corrected_query': corrected_query if was_corrected else None,
                 'results': [],
                 'total_results': 0,
                 'categories': []
             }
             
         # Search the database
-        search_results = search_database(processed_query)
+        logger.info("Starting database search")
+        results = search_database(processed_query)
         
-        # Ensure total_results is 0 if no results found
-        if not search_results.get('results'):
-            search_results['total_results'] = 0
-            
-        return search_results
+        # Add corrected query information
+        if was_corrected:
+            results['corrected_query'] = corrected_query
+        
+        return results
         
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}")
@@ -641,133 +2071,6 @@ def process_query(query):
             'total_results': 0,
             'categories': []
         }
-
-def get_best_response(query_results):
-    """
-    Determine the best response based on search results
-    
-    Args:
-        query_results (dict): The output from process_query()
-        
-    Returns:
-        tuple: (response_text, response_type, source_items)
-    """
-    try:
-        # Define a priority order for result types we actually have
-        priority_order = [
-            'projects',  # Projects first
-            'experiences',
-            'challenges',
-            'articles',  # Articles before courses
-            'courses',
-            'skills',
-            'jobs',
-            'announcements',
-            'page_content'
-        ]
-        
-        # Find the category with the highest relevance score
-        best_category = None
-        best_score = -1
-        best_items = None
-        
-        # Group results by category
-        results_by_category = {}
-        for item in query_results.get('results', []):
-            category = item['category']
-            if category not in results_by_category:
-                results_by_category[category] = []
-            results_by_category[category].append(item)
-        
-        # Find the best category based on priority order and relevance
-        for category in priority_order:
-            items = results_by_category.get(category, [])
-            if items:
-                # Get the highest relevance score for this category
-                category_score = max(
-                    float(item.get('relevance_score', 0) or 0)
-                    for item in items
-                )
-                
-                # If this category has a higher score, or it's the first valid category
-                if category_score > best_score or best_category is None:
-                    best_score = category_score
-                    best_category = category
-                    best_items = items
-        
-        if best_category:
-            return (None, best_category, best_items)
-        
-        # No good matches
-        return (None, 'no_match', None)
-        
-    except Exception as e:
-        logger.error(f"Error in get_best_response: {str(e)}")
-        return (None, 'no_match', None)
-
-def format_search_results(search_results, query):
-    """
-    Format search results into a conversational response
-
-    Args:
-        search_results (dict): The search results from process_query
-        query (str): The original search query
-
-    Returns:
-        str: Formatted conversational response string
-    """
-    try:
-        results_list = search_results.get('results', [])
-        if not results_list:
-            return f"""I couldn't find specific information for '{query}'. Can you try rephrasing or asking about one of our main projects?<br><br>Here are some popular topics you might be interested in:<br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about AppAttack')">AppAttack</button><br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about PT GUI')">PT GUI</button><br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about Smishing Detection')">Smishing Detection</button>"""
-
-        # Sort results by relevance score to get the most relevant result
-        results_list.sort(key=lambda x: (-x.get('relevance_score', 0), -x.get('priority', 0)))
-        best_result = results_list[0]
-        category = best_result.get('category', 'unknown')
-
-        # Format response based on the category
-        if category == 'page_content':
-            response = f"""Let me tell you about {best_result['title']}! 🚀<br><br>{best_result['content']}<br><br>"""
-            if best_result.get('page_path'):
-                response += f"""🔗 <a href="{best_result['page_path']}" class="learn-more-link">Learn more here</a><br><br>"""
-            response += """Want to know more? Try asking about:<br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about AppAttack')">AppAttack</button><br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about PT GUI')">PT GUI</button><br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about Smishing Detection')">Smishing Detection</button>"""
-            return response
-
-        elif category == 'faq':
-            return f"""Here's what I found about that! 💡<br><br>{best_result['content']}<br><br>Want to know more? Try asking about:<br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about AppAttack')">AppAttack</button><br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about PT GUI')">PT GUI</button><br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about Smishing Detection')">Smishing Detection</button>"""
-
-        elif category == 'projects':
-            response = f"""Oh, you're interested in {best_result['title']}? That's fantastic! 🛠️<br><br>{best_result['content']}<br><br>"""
-            response += f"""Want to get involved? Try asking:<br>
-            <button class="suggestion-btn" onclick="sendMessage('how to join {best_result['title']}')">How to join {best_result['title']}</button><br><br>
-            Or learn about other projects:<br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about AppAttack')">AppAttack</button><br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about PT GUI')">PT GUI</button><br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about Smishing Detection')">Smishing Detection</button>"""
-            return response
-
-        else:
-            # Default response for other categories
-            response = f"""Here's what I found about {best_result.get('title', 'this topic')}! 🔍<br><br>{best_result.get('content', 'No specific content available')}<br><br>"""
-            response += """Want to know more? Try asking about:<br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about AppAttack')">AppAttack</button><br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about PT GUI')">PT GUI</button><br>
-            • <button class="suggestion-btn" onclick="sendMessage('Tell me about Smishing Detection')">Smishing Detection</button>"""
-            return response
-
-    except Exception as e:
-        logger.error(f"Error formatting search results: {str(e)}")
-        return """I'm sorry, I encountered an error while processing your request. Please try asking about our main projects like AppAttack, PT GUI, or Smishing Detection."""
 
 def format_model_response(items, model_type):
     """
@@ -787,8 +2090,8 @@ def format_model_response(items, model_type):
         response_text = ""
         
         # Sort items by relevance score if available
-        if isinstance(items, list) and items and 'relevance_score' in items[0]:
-            items = sorted(items, key=lambda x: -x['relevance_score'])
+        if isinstance(items, list) and items and 'score' in items[0]:
+            items = sorted(items, key=lambda x: -x['score'])
         
         # Limit to top 5 results for each category
         items = items[:5]
@@ -798,18 +2101,18 @@ def format_model_response(items, model_type):
             for item in items:
                 response_text += f"<strong>{item.get('title', 'Untitled')}</strong><br>"
                 # Truncate content if too long
-                content = item.get('content', '')
+                content = item.get('description', '')
                 if len(content) > 300:
                     content = content[:300] + "..."
                 response_text += f"{content}<br>"
-                if item.get('page_path'):
-                    response_text += f'<a href="{item["page_path"]}" class="learn-more-link">Learn more</a><br><br>'
+                if item.get('url'):
+                    response_text += f'<a href="{item["url"]}" class="learn-more-link">Learn more</a><br><br>'
                 
         elif model_type == 'faq':
             response_text = "Here are some relevant FAQs:<br><br>"
             for item in items:
                 response_text += f"<strong>Q: {item.get('title', 'No question provided')}</strong><br>"
-                response_text += f"A: {item.get('content', 'No answer provided')}<br>"
+                response_text += f"A: {item.get('description', 'No answer provided')}<br>"
                 if item.get('category'):
                     response_text += f"Category: {item['category']}<br><br>"
                 
@@ -846,7 +2149,7 @@ def format_model_response(items, model_type):
                 
                 # Add other relevant fields
                 for key, value in item.items():
-                    if key not in ['title', 'name', 'question', 'relevance_score', 'category'] and value:
+                    if key not in ['title', 'name', 'question', 'score', 'category'] and value:
                         # Format the key nicely
                         formatted_key = key.replace('_', ' ').title()
                         # Handle different value types
@@ -860,279 +2163,74 @@ def format_model_response(items, model_type):
         return response_text
         
     except Exception as e:
-        logger.error(f"Error formatting {model_type} response: {str(e)}")
-        return f"An error occurred while formatting the {model_type} results. Please try again."
+        logger.error(f"Error formatting model response: {str(e)}")
+        return f"Error formatting {model_type} results." 
 
-def search(query):
-    """
-    Search function that searches across all content types and returns relevant results
-    
-    Args:
-        query (str): The user's search query
-        
-    Returns:
-        dict: A dictionary containing search results for different content types
-    """
-    import logging
-    import operator
-    from functools import reduce
-    from django.db.models import Q
-    
-    # Set up logging
-    logger = logging.getLogger(__name__)
-    
-    # Initialize empty results dict with all possible content types
-    results = {
-        'ranked_results': {
-            'page_content': [],
-            'projects': [],  # Changed from 'project' to 'projects'
-            'faqs': [],
-            'challenges': [],
-            'courses': [],
-            'skills': [],
-            'jobs': [],
-            'articles': [],
-            'announcements': [],
-            'experiences': [],
-            'contact_info': [],
-            'join_requests': []
-        },
-        'project_keywords': []
-    }
-    
-    try:
-        # Log the search query
-        logger.info(f"Searching for: {query}")
-        
-        # Process query: convert to lowercase and extract keywords
-        query = query.lower()
-        # Remove common stop words for better keyword extraction
-        stop_words = {'the', 'a', 'an', 'in', 'on', 'at', 'of', 'for', 'to', 'and', 'or', 'is', 'are'}
-        keywords = [word for word in query.split() if word not in stop_words and len(word) > 2]
-        
-        # If no valid keywords found, use the original query words as fallback
-        if not keywords and query:
-            keywords = query.split()
-        
-        # Log the extracted keywords
-        logger.info(f"Search keywords: {keywords}")
-        
-        # Building query filter conditions
-        # This creates a complex Q object that will match any of the keywords in any of the specified fields
-        if keywords:
-            # Search in Page model
-            try:
-                from .models import Page
-                page_q_objects = [Q(title__icontains=keyword) | Q(content__icontains=keyword) | Q(keywords__icontains=keyword) for keyword in keywords]
-                if page_q_objects:
-                    page_query = reduce(operator.or_, page_q_objects)
-                    pages = Page.objects.filter(page_query)
-                    # Add relevance score to each result
-                    for page in pages:
-                        page.relevance_score = get_relevance_score(page, query, keywords, 'page_content')
-                    results['ranked_results']['page_content'] = pages
-            except Exception as e:
-                logger.error(f"Error searching Page model: {str(e)}")
-                results['ranked_results']['page_content'] = []
-            
-            # Search in FAQ model
-            try:
-                from .models import FAQ
-                faq_q_objects = [Q(question__icontains=keyword) | Q(answer__icontains=keyword) | Q(category__icontains=keyword) | Q(keywords__icontains=keyword) for keyword in keywords]
-                if faq_q_objects:
-                    faq_query = reduce(operator.or_, faq_q_objects)
-                    faqs = FAQ.objects.filter(faq_query)
-                    # Add relevance score to each result
-                    for faq in faqs:
-                        faq.relevance_score = get_relevance_score(faq, query, keywords, 'faqs')
-                    results['ranked_results']['faqs'] = faqs
-            except Exception as e:
-                logger.error(f"Error searching FAQ model: {str(e)}")
-                results['ranked_results']['faqs'] = []
-            
-            # Search in Challenge model
-            try:
-                from .models import Challenge
-                challenge_q_objects = [Q(title__icontains=keyword) | Q(description__icontains=keyword) | Q(category__icontains=keyword) for keyword in keywords]
-                if challenge_q_objects:
-                    challenge_query = reduce(operator.or_, challenge_q_objects)
-                    challenges = Challenge.objects.filter(challenge_query)
-                    # Add relevance score to each result
-                    for challenge in challenges:
-                        challenge.relevance_score = get_relevance_score(challenge, query, keywords, 'challenges')
-                    results['ranked_results']['challenges'] = challenges
-            except Exception as e:
-                logger.error(f"Error searching Challenge model: {str(e)}")
-                results['ranked_results']['challenges'] = []
-            
-            # Search in Project model
-            try:
-                project_query = Q()
-                for keyword in keywords:
-                    # Project model uses title with choices
-                    project_query |= Q(title__icontains=keyword)
-                
-                if project_query:
-                    project_results = Project.objects.filter(project_query)
-                    # Add relevance score to each result
-                    for project in project_results:
-                        project.relevance_score = get_relevance_score(project, query, keywords, 'project')
-                    results['ranked_results']['projects'] = project_results  # Note: Changed from 'project' to 'projects'
-            except Exception as e:
-                logger.error(f"Error searching Projects: {str(e)}")
-                results['ranked_results']['projects'] = []  # Note: Changed from 'project' to 'projects'
-            
-            # Search in Course model
-            try:
-                from .models import Course
-                course_q_objects = [Q(name__icontains=keyword) | Q(description__icontains=keyword) | Q(category__icontains=keyword) for keyword in keywords]
-                if course_q_objects:
-                    course_query = reduce(operator.or_, course_q_objects)
-                    courses = Course.objects.filter(course_query)
-                    # Add relevance score to each result
-                    for course in courses:
-                        course.relevance_score = get_relevance_score(course, query, keywords, 'courses')
-                    results['ranked_results']['courses'] = courses
-            except Exception as e:
-                logger.error(f"Error searching Course model: {str(e)}")
-                results['ranked_results']['courses'] = []
-            
-            # Search in Skill model
-            try:
-                from .models import Skill
-                skill_q_objects = [Q(name__icontains=keyword) | Q(description__icontains=keyword) | Q(category__icontains=keyword) for keyword in keywords]
-                if skill_q_objects:
-                    skill_query = reduce(operator.or_, skill_q_objects)
-                    skills = Skill.objects.filter(skill_query)
-                    # Add relevance score to each result
-                    for skill in skills:
-                        skill.relevance_score = get_relevance_score(skill, query, keywords, 'skills')
-                    results['ranked_results']['skills'] = skills
-            except Exception as e:
-                logger.error(f"Error searching Skill model: {str(e)}")
-                results['ranked_results']['skills'] = []
-            
-            # Search in Job model
-            try:
-                from .models import Job
-                job_q_objects = [Q(title__icontains=keyword) | Q(description__icontains=keyword) | Q(location__icontains=keyword) | Q(job_type__icontains=keyword) for keyword in keywords]
-                if job_q_objects:
-                    job_query = reduce(operator.or_, job_q_objects)
-                    jobs = Job.objects.filter(job_query)
-                    # Add relevance score to each result
-                    for job in jobs:
-                        job.relevance_score = get_relevance_score(job, query, keywords, 'jobs')
-                    results['ranked_results']['jobs'] = jobs
-            except Exception as e:
-                logger.error(f"Error searching Job model: {str(e)}")
-                results['ranked_results']['jobs'] = []
-            
-            # Search in Article model
-            try:
-                from .models import Article
-                article_q_objects = [Q(title__icontains=keyword) | Q(content__icontains=keyword) | Q(category__icontains=keyword) | Q(tags__icontains=keyword) for keyword in keywords]
-                if article_q_objects:
-                    article_query = reduce(operator.or_, article_q_objects)
-                    articles = Article.objects.filter(article_query)
-                    # Add relevance score to each result
-                    for article in articles:
-                        article.relevance_score = get_relevance_score(article, query, keywords, 'articles')
-                    results['ranked_results']['articles'] = articles
-            except Exception as e:
-                logger.error(f"Error searching Article model: {str(e)}")
-                results['ranked_results']['articles'] = []
-            
-            # Search in Announcement model
-            try:
-                from .models import Announcement
-                announcement_q_objects = [Q(message__icontains=keyword) for keyword in keywords]
-                if announcement_q_objects:
-                    announcement_query = reduce(operator.or_, announcement_q_objects)
-                    announcements = Announcement.objects.filter(announcement_query)
-                    # Filter only active announcements
-                    announcements = [a for a in announcements if getattr(a, 'isActive', True)]
-                    # Add relevance score to each result
-                    for announcement in announcements:
-                        announcement.relevance_score = get_relevance_score(announcement, query, keywords, 'announcements')
-                    results['ranked_results']['announcements'] = announcements
-            except Exception as e:
-                logger.error(f"Error searching Announcement model: {str(e)}")
-                results['ranked_results']['announcements'] = []
-            
-            # Search in Experience model
-            try:
-                # Use the already imported Experience model from home.models
-                experience_q_objects = [Q(name__icontains=keyword) | Q(feedback__icontains=keyword) for keyword in keywords]
-                if experience_q_objects:
-                    experience_query = reduce(operator.or_, experience_q_objects)
-                    experiences = Experience.objects.filter(experience_query)
-                    # Add relevance score to each result
-                    for experience in experiences:
-                        experience.relevance_score = get_relevance_score(experience, query, keywords, 'experiences')
-                    results['ranked_results']['experiences'] = experiences
-            except Exception as e:
-                logger.error(f"Error searching Experience model: {str(e)}")
-                results['ranked_results']['experiences'] = []
-            
-            # Search in Contact model
-            try:
-                from .models import Contact, DDT_contact
-                # Combine searches from both contact models into one list
-                contact_q_objects = [Q(name__icontains=keyword) | Q(subject__icontains=keyword) | Q(message__icontains=keyword) for keyword in keywords]
-                if contact_q_objects:
-                    contact_query = reduce(operator.or_, contact_q_objects)
-                    contacts = list(Contact.objects.filter(contact_query))
-                    
-                    # Add DDT contacts
-                    ddt_contact_q_objects = [Q(name__icontains=keyword) | Q(subject__icontains=keyword) | Q(message__icontains=keyword) for keyword in keywords]
-                    if ddt_contact_q_objects:
-                        ddt_contact_query = reduce(operator.or_, ddt_contact_q_objects)
-                        ddt_contacts = DDT_contact.objects.filter(ddt_contact_query)
-                        contacts.extend(ddt_contacts)
-                    
-                    # Add relevance score to each result
-                    for contact in contacts:
-                        contact.relevance_score = get_relevance_score(contact, query, keywords, 'contact_info')
-                    results['ranked_results']['contact_info'] = contacts
-            except Exception as e:
-                logger.error(f"Error searching Contact models: {str(e)}")
-                results['ranked_results']['contact_info'] = []
-            
-            # Search in Join Request models
-            try:
-                from .models import Smishingdetection_join_us, Projects_join_us
-                # Combine searches from both join request models into one list
-                join_req_list = []
-                
-                smishing_q_objects = [Q(name__icontains=keyword) | Q(subject__icontains=keyword) | Q(message__icontains=keyword) for keyword in keywords]
-                if smishing_q_objects:
-                    smishing_query = reduce(operator.or_, smishing_q_objects)
-                    smishing_requests = Smishingdetection_join_us.objects.filter(smishing_query)
-                    join_req_list.extend(smishing_requests)
-                
-                projects_q_objects = [Q(name__icontains=keyword) | Q(subject__icontains=keyword) | Q(message__icontains=keyword) for keyword in keywords]
-                if projects_q_objects:
-                    projects_query = reduce(operator.or_, projects_q_objects)
-                    project_requests = Projects_join_us.objects.filter(projects_query)
-                    join_req_list.extend(project_requests)
-                
-                # Add relevance score to each result
-                for join_req in join_req_list:
-                    join_req.relevance_score = get_relevance_score(join_req, query, keywords, 'join_requests')
-                
-                results['ranked_results']['join_requests'] = join_req_list
-            except Exception as e:
-                logger.error(f"Error searching Join Request models: {str(e)}")
-                results['ranked_results']['join_requests'] = []
-                
-    except Exception as e:
-        logger.error(f"General error in search function: {str(e)}")
-        # If a general error occurs, ensure all result categories are set to empty lists
-        for key in results['ranked_results']:
-            results['ranked_results'][key] = []
-    
-    # Rank the results
-    return rank_results(results['ranked_results'], query, keywords) 
+def format_search_results(search_results, query):
+    """Format search results into a readable response for the chatbot/web UI"""
+    response = ""
+    if not search_results:
+        return "I couldn't find any relevant information matching your query. Could you try rephrasing it or ask about something else?"
+
+    # Check for spell correction notice
+    corrected_query = search_results.get('corrected_query')
+    if corrected_query and corrected_query != query:
+        response += f"Showing results for <em>{corrected_query}</em> instead of '{query}'.<br><br>"
+
+    # Build category grouping from raw results list
+    raw_results = search_results.get('results', [])
+    items_by_category = {}
+    for item in raw_results:
+        typ = item.get('type')
+        if not typ:
+            continue
+        cat_key = typ if typ.endswith('s') else typ + 's'
+        items_by_category.setdefault(cat_key, []).append(item)
+
+    # --- CYBER CHALLENGES SPECIAL FORMATTING ---
+    # Use either explicit 'challenges' key or grouped items
+    challenges = search_results.get('challenges') or items_by_category.get('challenges', [])
+    if challenges:
+        # Limit to first 3
+        top_challenges = challenges[:3]
+        response += f"Hardhat Assistant:<br>👋 Hi {{USER}} Here are the top {len(top_challenges)} Cyber Challenges ready for you to tackle:<br><br>"
+        for ch in top_challenges:
+            response += "⸻<br><br>"
+            difficulty = ch.get('difficulty', 'Medium')
+            points = ch.get('points', 0)
+            color = {'Easy':'🟩','Medium':'🟨','Hard':'🟥'}.get(difficulty, '🟨')
+            response += f"📘 {ch.get('title', '')}<br>"
+            response += f"{ch.get('description','')}<br>"
+            response += f"{color} Difficulty: {difficulty}<br>"
+            response += f"🔥 {points}<br>"
+            response += f"🔗 <a href='/challenges/detail/{ch.get('id')}' class='learn-more-link'>Take Challenge</a><br>"
+        response += "⸻<br><br>"
+        response += "💬 Would you like to see more cyber challenges?<br>"
+        response += "<button class='suggestion-btn' onclick=\"sendMessage('Show me more cyber challenges')\">👉 Show me more cyber challenges</button><br><br>"
+        return response.strip()
+    # --- END CYBER CHALLENGES SPECIAL FORMATTING ---
+
+    # Default formatting for other categories
+    for category, items in items_by_category.items():
+        if category == 'challenges':
+            continue
+        # Show only up to 3 items
+        slice_items = items[:3]
+        response += f"👋 Hi! Here are some {category.title()} related to your query:<br><br>"
+        response += "⸻<br><br>"
+        for it in slice_items:
+            title = it.get('title','')
+            desc = it.get('description','')
+            response += f"📌 {title}<br>"
+            response += f"{desc}<br>"
+            cid = it.get('id')
+            if cid is not None:
+                response += f"🔗 <a href='/{category}/detail/{cid}' class='learn-more-link'>Learn More</a><br><br>"
+            response += "⸻<br><br>"
+        response += f"💬 Want to see more {category}?<br>"
+        response += f"<button class='suggestion-btn' onclick=\"sendMessage('Show me more {category}')\">👉 Show me more {category}</button><br><br>"
+
+    return response.strip()
 
 def verify_search_connection():
     """
@@ -1213,3 +2311,197 @@ def verify_search_connection():
             "message": f"Search connection error: {e}",
             "diagnostics": {"error_type": type(e).__name__, "error_message": str(e)}
         } 
+
+def search(query, user_email=None):
+    """
+    Main search function that takes a user query and returns formatted results
+    
+    Args:
+        query (str): The user's search query
+        user_email (str, optional): The email of the current user, for personalized results
+        
+    Returns:
+        str: A formatted response based on the query results
+    """
+    logger.info(f"\n{'='*50}\nStarting search for query: '{query}'")
+    try:
+        # Process the query through our search pipeline
+        logger.info("Processing query through search pipeline")
+        search_results = process_query(query)
+        
+        # If user email is provided and query might be about jobs/applications
+        if user_email and ('job' in query.lower() or 'apply' in query.lower() or 'application' in query.lower()):
+            logger.info(f"User email provided, checking for job applications: {user_email}")
+            
+            # Search for user's job applications
+            job_applications = search_job_applications(query, user_email)
+            
+            if job_applications:
+                logger.info(f"Found {len(job_applications)} job applications for user {user_email}")
+                
+                # Add job applications to results
+                if 'results' not in search_results:
+                    search_results['results'] = []
+                
+                search_results['results'].extend(job_applications)
+                
+                if 'categories' not in search_results:
+                    search_results['categories'] = []
+                
+                if 'jobapplications' not in search_results['categories']:
+                    search_results['categories'].append('jobapplications')
+                    
+                search_results['total_results'] = len(search_results['results'])
+        
+        # Format the results into a conversational response
+        logger.info("Formatting search results")
+        response = format_search_results(search_results, query)
+        
+        logger.info("Search completed successfully")
+        return response
+    except Exception as e:
+        logger.error(f"Search error: {str(e)}")
+        return f"I'm sorry, but I encountered an error while searching for '{query}'. Please try again with a different query."
+
+def search_job_applications(query, user_email=None):
+    """
+    Search for job applications, but only return results if they belong to the current user.
+    
+    Args:
+        query (str): The search query
+        user_email (str): The email of the current user
+        
+    Returns:
+        list: List of job application results that belong to the user
+    """
+    logger.info(f"Searching job applications with query: '{query}', user_email: '{user_email}'")
+    
+    # If no user email is provided, we can't verify ownership, so return no results
+    if not user_email:
+        logger.info("No user email provided, skipping job application search")
+        return []
+        
+    try:
+        # Build query to find matching job applications
+        application_query = (
+            Q(job__title__icontains=query) |
+            Q(job__job_type__icontains=query) |
+            Q(job__location__icontains=query)
+        )
+        
+        # Only return applications for the current user's email
+        user_filter = Q(email=user_email)
+        
+        # Find the matching applications
+        applications = JobApplication.objects.filter(
+            application_query & user_filter
+        ).select_related('job').order_by('-applied_date')
+        
+        logger.info(f"Found {applications.count()} job applications for user '{user_email}'")
+        
+        # Format the results
+        results = []
+        for app in applications:
+            results.append({
+                'id': app.id,
+                'title': f"Your application for: {app.job.title}",
+                'description': f"Applied on: {app.applied_date.strftime('%Y-%m-%d')}",
+                'score': 90,  # High score for personal results
+                'type': 'jobapplication',
+                'url': f"/jobs/{app.job.id}/"
+            })
+            
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error searching job applications: {str(e)}")
+        return [] 
+
+def correct_spelling(query):
+    """
+    Attempt to correct spelling errors in the query using fuzzy matching
+    
+    Args:
+        query (str): The search query to correct
+        
+    Returns:
+        str: The corrected query
+    """
+    try:
+        # Get all possible terms from the database
+        vocabulary = []
+        
+        # Add project names and keywords
+        projects = Project.objects.all()
+        for project in projects:
+            if project.name:
+                vocabulary.append(project.name.lower())
+            if project.keywords:
+                keywords = [k.strip().lower() for k in project.keywords.split(',')]
+                vocabulary.extend(keywords)
+                
+        # Add challenge questions and categories
+        challenges = CyberChallenge.objects.all()
+        for challenge in challenges:
+            if challenge.question:
+                vocabulary.append(challenge.question.lower())
+            if challenge.category:
+                vocabulary.append(challenge.category.lower())
+                
+        # Add course titles and codes
+        courses = Course.objects.all()
+        for course in courses:
+            if course.title:
+                vocabulary.append(course.title.lower())
+            if course.code:
+                vocabulary.append(course.code.lower())
+                
+        # Add common domain-specific terms
+        domain_terms = [
+            'security', 'cyber', 'cyberattack', 'cybersecurity', 'attack', 'defense',
+            'vulnerability', 'exploit', 'malware', 'virus', 'trojan', 'ransomware',
+            'phishing', 'smishing', 'authentication', 'authorization', 'encryption',
+            'decryption', 'penetration', 'testing', 'pentest', 'hacking', 'ethical',
+            'firewall', 'intrusion', 'detection', 'prevention', 'deakin', 'university',
+            'course', 'project', 'challenge', 'ctf', 'capture', 'flag'
+        ]
+        vocabulary.extend(domain_terms)
+        
+        # Create a unique vocabulary
+        vocabulary = list(set(vocabulary))
+        
+        # Split the query into words and try to correct each word
+        words = query.split()
+        corrected_words = []
+        
+        for word in words:
+            # Only try to correct words longer than 3 characters
+            if len(word) <= 3:
+                corrected_words.append(word)
+                continue
+                
+            # Skip stopwords
+            if word.lower() in STOPWORDS:
+                corrected_words.append(word)
+                continue
+                
+            # Find closest matches in vocabulary
+            cutoff = 0.7  # Match threshold
+            matches = difflib.get_close_matches(word.lower(), vocabulary, n=3, cutoff=cutoff)
+            
+            if matches:
+                # Found a close match
+                best_match = matches[0]
+                if best_match != word.lower():
+                    corrected_words.append(best_match)
+                else:
+                    corrected_words.append(word)
+            else:
+                corrected_words.append(word)
+                
+        corrected_query = ' '.join(corrected_words)
+        return corrected_query
+        
+    except Exception as e:
+        logger.error(f"Error in spell correction: {str(e)}")
+        return query

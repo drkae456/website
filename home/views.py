@@ -1419,14 +1419,29 @@ def get_current_user(request):
     """
     Returns information about the current logged-in user.
     Returns user ID, first name, last name, and authentication status.
+    Includes an auth token for cross-domain authentication with the chatbot.
     """
+    import hashlib
+    import time
+    
+    # Current timestamp for token generation
+    timestamp = int(time.time())
+    
     if request.user.is_authenticated:
+        user_id = request.user.id
+        
+        # Generate a secure token that can be verified by the chatbot server
+        token_data = f"{user_id}:{timestamp}:{settings.SECRET_KEY}"
+        auth_token = hashlib.sha256(token_data.encode()).hexdigest()
+        
         return JsonResponse({
             'is_authenticated': True,
             'id': request.user.id,
             'email': request.user.email,
             'first_name': request.user.first_name,
-            'last_name': request.user.last_name
+            'last_name': request.user.last_name,
+            'auth_token': auth_token,
+            'auth_timestamp': timestamp
         })
     else:
         return JsonResponse({
