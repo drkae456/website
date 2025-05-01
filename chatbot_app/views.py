@@ -13,13 +13,14 @@ from home.models import (
     Article,
     Job,
     Announcement,
-    Experience
+    Experience,
+    LeaderBoardTable
 )
 import uuid
 from django.shortcuts import get_object_or_404
 from django.views.decorators.http import require_http_methods
 import datetime
-from . import search_engine
+from . import search_engine  # Import the whole module instead of specific functions
 from django.conf import settings
 import hashlib
 import time
@@ -28,7 +29,6 @@ from django.views.decorators.cache import never_cache
 from django.utils.crypto import constant_time_compare
 import logging
 from functools import wraps
-from .search_engine import format_model_response, verify_search_connection
 from django.utils import timezone
 from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required
@@ -144,25 +144,29 @@ def api_auth_required(view_func):
 
 def extract_keywords(message):
     """Extract keywords from the message (legacy function)"""
-    # Use the new search engine module
-    return search_engine.extract_project_keywords(message)
+    # Use the search_engine module
+    try:
+        return search_engine.extract_keywords(message)
+    except Exception as e:
+        logger.error(f"Error extracting keywords: {str(e)}")
+        return []
 
 def format_page_content(page_results, keywords):
     """Format page content results into a readable response (legacy function)"""
     
     # Define project responses (ensure this is defined or passed correctly)
     project_responses = {
-            'appattack': """Oh, you're interested in AppAttack? That's awesome! 🚀 AppAttack is perfect for anyone who's passionate about web security and application development. It's like a playground for learning about real-world vulnerabilities!<br><br>Here's what makes it special:<br>• 🎯 Interactive challenges that feel like real-world scenarios<br>• 📊 Progress tracking to see how you're improving<br>• 👥 Team collaboration features to learn with others<br>• 💡 Detailed feedback to help you grow<br>• 🛡️ Real-world vulnerability testing<br>• 🔍 Hands-on security experience<br><br>🎯 Perfect for:<br>• Web developers<br>• Security enthusiasts<br>• Problem solvers<br>• Team players<br>• Anyone interested in web security!<br><br>🔗 <a href="/appattack/main" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join AppAttack')">How to join AppAttack</button>""",
+            'appattack': """Oh, you're interested in AppAttack? That's awesome! 🚀 AppAttack is perfect for anyone who's passionate about web security and application development. It's like a playground for learning about real-world vulnerabilities!<br><br>Here's what makes it special:<br>• 🎯 Interactive challenges that feel like real-world scenarios<br>• 📊 Progress tracking to see how you're improving<br>• 👥 Team collaboration features to learn with others<br>• 💡 Detailed feedback to help you grow<br>• 🛡️ Real-world vulnerability testing<br>• 🔍 Hands-on security experience<br><br>🎯 Perfect for:<br>• Web developers<br>• Security enthusiasts<br>• Problem solvers<br>• Team players<br>• Anyone interested in web security!<br><br>🔗 <a href="/appattack/" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join AppAttack')">How to join AppAttack</button>""",
 
-            'pt_gui': """Oh, you're interested in the Deakin Detonator Toolkit (DDT)? That's fantastic! 🛠️ This project is perfect for those who want to get hands-on with penetration testing in a user-friendly way. It's like having a Swiss Army knife for security testing!<br><br>Here's what makes DDT special:<br>• 🎯 44+ pen-testing tools at your fingertips<br>• 💻 User-friendly GUI interface<br>• 🚀 Built with Tauri, React, and Mantine<br>• 🐍 Python-powered automation<br>• 📚 12 HackTheBox walkthroughs included<br>• 🔧 Streamlined workflow automation<br><br>🎯 Key Features:<br>• Automated vulnerability scanning<br>• Manual testing tools<br>• Report generation<br>• Simplified command execution<br>• Interactive tool interfaces<br>• Comprehensive documentation<br><br>💪 Available Tools Include:<br>• Nmap for network scanning<br>• SMB Enumeration tools<br>• Shodan API integration<br>• JohnTheRipper & Hashcat<br>• Hydra for password attacks<br>• Many more security tools!<br><br>🔗 <a href="/pt_gui/main" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join PT GUI')">How to join PT GUI</button>""",
+            'pt_gui': """Oh, you're interested in the Deakin Detonator Toolkit (DDT)? That's fantastic! 🛠️ This project is perfect for those who want to get hands-on with penetration testing in a user-friendly way. It's like having a Swiss Army knife for security testing!<br><br>Here's what makes DDT special:<br>• 🎯 44+ pen-testing tools at your fingertips<br>• 💻 User-friendly GUI interface<br>• 🚀 Built with Tauri, React, and Mantine<br>• 🐍 Python-powered automation<br>• 📚 12 HackTheBox walkthroughs included<br>• 🔧 Streamlined workflow automation<br><br>🎯 Key Features:<br>• Automated vulnerability scanning<br>• Manual testing tools<br>• Report generation<br>• Simplified command execution<br>• Interactive tool interfaces<br>• Comprehensive documentation<br><br>💪 Available Tools Include:<br>• Nmap for network scanning<br>• SMB Enumeration tools<br>• Shodan API integration<br>• JohnTheRipper & Hashcat<br>• Hydra for password attacks<br>• Many more security tools!<br><br>🔗 <a href="/ptgui_viz/" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join PT GUI')">How to join PT GUI</button>""",
 
-            'smishing_detection': """Ah, Smishing Detection! 🛡️ This is a super relevant project in today's mobile-first world. We're revolutionizing mobile security!<br><br>Here's what makes it exciting:<br>• 🔍 AI-powered SMS threat detection<br>• 📱 Works on both Android and iOS<br>• ⚡ Real-time protection<br>• 🤖 Machine learning algorithms<br>• 🛡️ User-friendly security<br>• 🌐 Global anti-scam initiative<br><br>🎯 Key Features:<br>• Real-time SMS analysis<br>• Machine learning detection<br>• Instant threat notifications<br>• Smart message analysis<br>• Educational resources<br>• User-friendly interface<br><br>💪 What it protects against:<br>• Phishing SMS attempts<br>• Malicious URLs<br>• Scam messages<br>• Social engineering attacks<br>• Data theft attempts<br><br>🔗 <a href="/smishing_detection/main" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join Smishing Detection')">How to join Smishing Detection</button>""",
+            'smishing_detection': """Ah, Smishing Detection! 🛡️ This is a super relevant project in today's mobile-first world. We're revolutionizing mobile security!<br><br>Here's what makes it exciting:<br>• 🔍 AI-powered SMS threat detection<br>• 📱 Works on both Android and iOS<br>• ⚡ Real-time protection<br>• 🤖 Machine learning algorithms<br>• 🛡️ User-friendly security<br>• 🌐 Global anti-scam initiative<br><br>🎯 Key Features:<br>• Real-time SMS analysis<br>• Machine learning detection<br>• Instant threat notifications<br>• Smart message analysis<br>• Educational resources<br>• User-friendly interface<br><br>💪 What it protects against:<br>• Phishing SMS attempts<br>• Malicious URLs<br>• Scam messages<br>• Social engineering attacks<br>• Data theft attempts<br><br>🔗 <a href="/smishing_detection/" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join Smishing Detection')">How to join Smishing Detection</button>""",
 
-            'malware_visualization': """Oh, you're curious about Malware Visualization? That's awesome! 🔍🔮<br><br>🚨 Malware Visualization is like the Sherlock Holmes of cybersecurity — it helps you see the invisible threats hiding in your system through smart, interactive visual tools. Whether you're a cyber pro or just malware-curious, this platform gives you the power to uncover and understand malware patterns in a whole new way.<br><br>Here's what makes it special:<br>• 📊 User-friendly visual analysis of malware activity<br>• 🤖 AI-enhanced detection for both known and novel threats<br>• 💡 No need for deep technical expertise to get started<br>• 🌐 Integrates with tools like MapBox & Leaflet.js for dynamic interaction<br>• 📈 A dashboard preview that shows malware trends clearly<br>• 💪 Built to foster collaboration within the security community<br><br>🚨 Project Goals include:<br>• Creating a sleek, powerful tool for malware analysis<br>• Improving how threats are found and removed<br>• Making cybersecurity more accessible and efficient<br>• Encouraging tech community involvement<br><br>🔧 Wanna see the tool in action?<br>Check out the <a href="/malware_visualization/project_delivery" class="learn-more-link">Project Delivery here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join Malware Visualization')">How to join Malware Visualization</button>""",
+            'malware_visualization': """Oh, you're curious about Malware Visualization? That's awesome! 🔍🔮<br><br>🚨 Malware Visualization is like the Sherlock Holmes of cybersecurity — it helps you see the invisible threats hiding in your system through smart, interactive visual tools. Whether you're a cyber pro or just malware-curious, this platform gives you the power to uncover and understand malware patterns in a whole new way.<br><br>Here's what makes it special:<br>• 📊 User-friendly visual analysis of malware activity<br>• 🤖 AI-enhanced detection for both known and novel threats<br>• 💡 No need for deep technical expertise to get started<br>• 🌐 Integrates with tools like MapBox & Leaflet.js for dynamic interaction<br>• 📈 A dashboard preview that shows malware trends clearly<br>• 💪 Built to foster collaboration within the security community<br><br>🚨 Project Goals include:<br>• Creating a sleek, powerful tool for malware analysis<br>• Improving how threats are found and removed<br>• Making cybersecurity more accessible and efficient<br>• Encouraging tech community involvement<br><br>🔧 Wanna see the tool in action?<br>Check out the <a href="/malware_viz/" class="learn-more-link">Project Delivery here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join Malware Visualization')">How to join Malware Visualization</button>""",
 
-            'vr': """VR Security Training? Now we're talking! 🎮 This is perfect for those who want to experience cybersecurity training in a whole new dimension. It's like being in a cybersecurity action movie!<br><br>Here's what makes it revolutionary:<br>• 🕶️ Immersive VR learning experiences<br>• 🎯 Real-world scenario simulations<br>• 🏢 Small business focused training<br>• 🛡️ Interactive security challenges<br>• 📚 Comprehensive learning modules<br>• 🤝 Industry-aligned content<br><br>🎯 Training Modules:<br>• Password security mastery<br>• Data encryption practices<br>• Network security setup<br>• Safe web browsing habits<br>• Phishing attack recognition<br>• Wi-Fi security configuration<br><br>💪 Key Benefits:<br>• Virtual security scenarios<br>• Hands-on training<br>• Team-based challenges<br>• Progress tracking<br>• Real-time feedback<br>• Measurable outcomes<br><br>🔗 <a href="/Vr/main" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join VR Security')">How to join VR Security</button>""",
+            'vr': """VR Security Training? Now we're talking! 🎮 This is perfect for those who want to experience cybersecurity training in a whole new dimension. It's like being in a cybersecurity action movie!<br><br>Here's what makes it revolutionary:<br>• 🕶️ Immersive VR learning experiences<br>• 🎯 Real-world scenario simulations<br>• 🏢 Small business focused training<br>• 🛡️ Interactive security challenges<br>• 📚 Comprehensive learning modules<br>• 🤝 Industry-aligned content<br><br>🎯 Training Modules:<br>• Password security mastery<br>• Data encryption practices<br>• Network security setup<br>• Safe web browsing habits<br>• Phishing attack recognition<br>• Wi-Fi security configuration<br><br>💪 Key Benefits:<br>• Virtual security scenarios<br>• Hands-on training<br>• Team-based challenges<br>• Progress tracking<br>• Real-time feedback<br>• Measurable outcomes<br><br>🔗 <a href="/vr/" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join VR Security')">How to join VR Security</button>""",
 
-            'deakin_threatmirror': """DeakinThreatmirror? Now that's a fascinating project! 🎯 It's perfect for those who love turning complex data into beautiful, understandable visualizations. Think of it as a crystal ball for cybersecurity threats!<br><br>Here's what makes it special:<br>• 🎯 Open-source threat intelligence platform<br>• 📊 Advanced visual analytics for threat data<br>• 🤖 Machine learning-powered insights<br>• 🌐 Perfect for SMEs and developing economies<br>• 💡 User-friendly interface for complex data<br>• 🔄 Real-time threat feed aggregation<br><br>🎯 Project Goals:<br>• Revolutionize threat analysis and understanding<br>• Make cybersecurity accessible for smaller organizations<br>• Transform raw data into actionable intelligence<br>• Support developing economies with cost-effective solutions<br><br>💪 Key Benefits:<br>• Real-time threat data visualization<br>• Interactive maps and dashboards<br>• Customizable threat analysis<br>• Cost-effective solutions<br>• Easy-to-understand insights<br>• Community-driven development<br><br>🔗 <a href="/DeakinThreatmirror/main" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join DeakinThreatmirror')">How to join DeakinThreatmirror</button>"""
+            'deakin_threatmirror': """DeakinThreatmirror? Now that's a fascinating project! 🎯 It's perfect for those who love turning complex data into beautiful, understandable visualizations. Think of it as a crystal ball for cybersecurity threats!<br><br>Here's what makes it special:<br>• 🎯 Open-source threat intelligence platform<br>• 📊 Advanced visual analytics for threat data<br>• 🤖 Machine learning-powered insights<br>• 🌐 Perfect for SMEs and developing economies<br>• 💡 User-friendly interface for complex data<br>• 🔄 Real-time threat feed aggregation<br><br>🎯 Project Goals:<br>• Revolutionize threat analysis and understanding<br>• Make cybersecurity accessible for smaller organizations<br>• Transform raw data into actionable intelligence<br>• Support developing economies with cost-effective solutions<br><br>💪 Key Benefits:<br>• Real-time threat data visualization<br>• Interactive maps and dashboards<br>• Customizable threat analysis<br>• Cost-effective solutions<br>• Easy-to-understand insights<br>• Community-driven development<br><br>🔗 <a href="/deakinThreatmirror/" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join DeakinThreatmirror')">How to join DeakinThreatmirror</button>"""
     }
 
     # --- NEW LOGIC START ---
@@ -222,17 +226,17 @@ def format_page_content(page_results, keywords):
 
 # Define project responses
 project_responses = {
-    'appattack': """Oh, you're interested in AppAttack? That's awesome! 🚀 AppAttack is perfect for anyone who's passionate about web security and application development. It's like a playground for learning about real-world vulnerabilities!<br><br>Here's what makes it special:<br>• 🎯 Interactive challenges that feel like real-world scenarios<br>• 📊 Progress tracking to see how you're improving<br>• 👥 Team collaboration features to learn with others<br>• 💡 Detailed feedback to help you grow<br>• 🛡️ Real-world vulnerability testing<br>• 🔍 Hands-on security experience<br><br>🎯 Perfect for:<br>• Web developers<br>• Security enthusiasts<br>• Problem solvers<br>• Team players<br>• Anyone interested in web security!<br><br>🔗 <a href="/appattack/main" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join AppAttack')">How to join AppAttack</button>""",
+    'appattack': """Oh, you're interested in AppAttack? That's awesome! 🚀 AppAttack is perfect for anyone who's passionate about web security and application development. It's like a playground for learning about real-world vulnerabilities!<br><br>Here's what makes it special:<br>• 🎯 Interactive challenges that feel like real-world scenarios<br>• 📊 Progress tracking to see how you're improving<br>• 👥 Team collaboration features to learn with others<br>• 💡 Detailed feedback to help you grow<br>• 🛡️ Real-world vulnerability testing<br>• 🔍 Hands-on security experience<br><br>🎯 Perfect for:<br>• Web developers<br>• Security enthusiasts<br>• Problem solvers<br>• Team players<br>• Anyone interested in web security!<br><br>🔗 <a href="/appattack/" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join AppAttack')">How to join AppAttack</button>""",
 
-    'pt_gui': """Oh, you're interested in the Deakin Detonator Toolkit (DDT)? That's fantastic! 🛠️ This project is perfect for those who want to get hands-on with penetration testing in a user-friendly way. It's like having a Swiss Army knife for security testing!<br><br>Here's what makes DDT special:<br>• 🎯 44+ pen-testing tools at your fingertips<br>• 💻 User-friendly GUI interface<br>• 🚀 Built with Tauri, React, and Mantine<br>• 🐍 Python-powered automation<br>• 📚 12 HackTheBox walkthroughs included<br>• 🔧 Streamlined workflow automation<br><br>🎯 Key Features:<br>• Automated vulnerability scanning<br>• Manual testing tools<br>• Report generation<br>• Simplified command execution<br>• Interactive tool interfaces<br>• Comprehensive documentation<br><br>💪 Available Tools Include:<br>• Nmap for network scanning<br>• SMB Enumeration tools<br>• Shodan API integration<br>• JohnTheRipper & Hashcat<br>• Hydra for password attacks<br>• Many more security tools!<br><br>🔗 <a href="/pt_gui/main" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join PT GUI')">How to join PT GUI</button>""",
+    'pt_gui': """Oh, you're interested in the Deakin Detonator Toolkit (DDT)? That's fantastic! 🛠️ This project is perfect for those who want to get hands-on with penetration testing in a user-friendly way. It's like having a Swiss Army knife for security testing!<br><br>Here's what makes DDT special:<br>• 🎯 44+ pen-testing tools at your fingertips<br>• 💻 User-friendly GUI interface<br>• 🚀 Built with Tauri, React, and Mantine<br>• 🐍 Python-powered automation<br>• 📚 12 HackTheBox walkthroughs included<br>• 🔧 Streamlined workflow automation<br><br>🎯 Key Features:<br>• Automated vulnerability scanning<br>• Manual testing tools<br>• Report generation<br>• Simplified command execution<br>• Interactive tool interfaces<br>• Comprehensive documentation<br><br>💪 Available Tools Include:<br>• Nmap for network scanning<br>• SMB Enumeration tools<br>• Shodan API integration<br>• JohnTheRipper & Hashcat<br>• Hydra for password attacks<br>• Many more security tools!<br><br>🔗 <a href="/ptgui_viz/" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join PT GUI')">How to join PT GUI</button>""",
 
-    'smishing_detection': """Ah, Smishing Detection! 🛡️ This is a super relevant project in today's mobile-first world. We're revolutionizing mobile security!<br><br>Here's what makes it exciting:<br>• 🔍 AI-powered SMS threat detection<br>• 📱 Works on both Android and iOS<br>• ⚡ Real-time protection<br>• 🤖 Machine learning algorithms<br>• 🛡️ User-friendly security<br>• 🌐 Global anti-scam initiative<br><br>🎯 Key Features:<br>• Real-time SMS analysis<br>• Machine learning detection<br>• Instant threat notifications<br>• Smart message analysis<br>• Educational resources<br>• User-friendly interface<br><br>💪 What it protects against:<br>• Phishing SMS attempts<br>• Malicious URLs<br>• Scam messages<br>• Social engineering attacks<br>• Data theft attempts<br><br>🔗 <a href="/smishing_detection/main" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join Smishing Detection')">How to join Smishing Detection</button>""",
+    'smishing_detection': """Ah, Smishing Detection! 🛡️ This is a super relevant project in today's mobile-first world. We're revolutionizing mobile security!<br><br>Here's what makes it exciting:<br>• 🔍 AI-powered SMS threat detection<br>• 📱 Works on both Android and iOS<br>• ⚡ Real-time protection<br>• 🤖 Machine learning algorithms<br>• 🛡️ User-friendly security<br>• 🌐 Global anti-scam initiative<br><br>🎯 Key Features:<br>• Real-time SMS analysis<br>• Machine learning detection<br>• Instant threat notifications<br>• Smart message analysis<br>• Educational resources<br>• User-friendly interface<br><br>💪 What it protects against:<br>• Phishing SMS attempts<br>• Malicious URLs<br>• Scam messages<br>• Social engineering attacks<br>• Data theft attempts<br><br>🔗 <a href="/smishing_detection/" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join Smishing Detection')">How to join Smishing Detection</button>""",
 
-    'malware_visualization': """Oh, you're curious about Malware Visualization? That's awesome! 🔍🔮<br><br>🚨 Malware Visualization is like the Sherlock Holmes of cybersecurity — it helps you see the invisible threats hiding in your system through smart, interactive visual tools. Whether you're a cyber pro or just malware-curious, this platform gives you the power to uncover and understand malware patterns in a whole new way.<br><br>Here's what makes it special:<br>• 📊 User-friendly visual analysis of malware activity<br>• 🤖 AI-enhanced detection for both known and novel threats<br>• 💡 No need for deep technical expertise to get started<br>• 🌐 Integrates with tools like MapBox & Leaflet.js for dynamic interaction<br>• 📈 A dashboard preview that shows malware trends clearly<br>• 💪 Built to foster collaboration within the security community<br><br>🚨 Project Goals include:<br>• Creating a sleek, powerful tool for malware analysis<br>• Improving how threats are found and removed<br>• Making cybersecurity more accessible and efficient<br>• Encouraging tech community involvement<br><br>🔧 Wanna see the tool in action?<br>Check out the <a href="/malware_visualization/project_delivery" class="learn-more-link">Project Delivery here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join Malware Visualization')">How to join Malware Visualization</button>""",
+    'malware_visualization': """Oh, you're curious about Malware Visualization? That's awesome! 🔍🔮<br><br>🚨 Malware Visualization is like the Sherlock Holmes of cybersecurity — it helps you see the invisible threats hiding in your system through smart, interactive visual tools. Whether you're a cyber pro or just malware-curious, this platform gives you the power to uncover and understand malware patterns in a whole new way.<br><br>Here's what makes it special:<br>• 📊 User-friendly visual analysis of malware activity<br>• 🤖 AI-enhanced detection for both known and novel threats<br>• 💡 No need for deep technical expertise to get started<br>• 🌐 Integrates with tools like MapBox & Leaflet.js for dynamic interaction<br>• 📈 A dashboard preview that shows malware trends clearly<br>• 💪 Built to foster collaboration within the security community<br><br>🚨 Project Goals include:<br>• Creating a sleek, powerful tool for malware analysis<br>• Improving how threats are found and removed<br>• Making cybersecurity more accessible and efficient<br>• Encouraging tech community involvement<br><br>🔧 Wanna see the tool in action?<br>Check out the <a href="/malware_viz/" class="learn-more-link">Project Delivery here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join Malware Visualization')">How to join Malware Visualization</button>""",
 
-    'vr': """VR Security Training? Now we're talking! 🎮 This is perfect for those who want to experience cybersecurity training in a whole new dimension. It's like being in a cybersecurity action movie!<br><br>Here's what makes it revolutionary:<br>• 🕶️ Immersive VR learning experiences<br>• 🎯 Real-world scenario simulations<br>• 🏢 Small business focused training<br>• 🛡️ Interactive security challenges<br>• 📚 Comprehensive learning modules<br>• 🤝 Industry-aligned content<br><br>🎯 Training Modules:<br>• Password security mastery<br>• Data encryption practices<br>• Network security setup<br>• Safe web browsing habits<br>• Phishing attack recognition<br>• Wi-Fi security configuration<br><br>💪 Key Benefits:<br>• Virtual security scenarios<br>• Hands-on training<br>• Team-based challenges<br>• Progress tracking<br>• Real-time feedback<br>• Measurable outcomes<br><br>🔗 <a href="/Vr/main" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join VR Security')">How to join VR Security</button>""",
+    'vr': """VR Security Training? Now we're talking! 🎮 This is perfect for those who want to experience cybersecurity training in a whole new dimension. It's like being in a cybersecurity action movie!<br><br>Here's what makes it revolutionary:<br>• 🕶️ Immersive VR learning experiences<br>• 🎯 Real-world scenario simulations<br>• 🏢 Small business focused training<br>• 🛡️ Interactive security challenges<br>• 📚 Comprehensive learning modules<br>• 🤝 Industry-aligned content<br><br>🎯 Training Modules:<br>• Password security mastery<br>• Data encryption practices<br>• Network security setup<br>• Safe web browsing habits<br>• Phishing attack recognition<br>• Wi-Fi security configuration<br><br>💪 Key Benefits:<br>• Virtual security scenarios<br>• Hands-on training<br>• Team-based challenges<br>• Progress tracking<br>• Real-time feedback<br>• Measurable outcomes<br><br>🔗 <a href="/vr/" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join VR Security')">How to join VR Security</button>""",
 
-    'deakin_threatmirror': """DeakinThreatmirror? Now that's a fascinating project! 🎯 It's perfect for those who love turning complex data into beautiful, understandable visualizations. Think of it as a crystal ball for cybersecurity threats!<br><br>Here's what makes it special:<br>• 🎯 Open-source threat intelligence platform<br>• 📊 Advanced visual analytics for threat data<br>• 🤖 Machine learning-powered insights<br>• 🌐 Perfect for SMEs and developing economies<br>• 💡 User-friendly interface for complex data<br>• 🔄 Real-time threat feed aggregation<br><br>🎯 Project Goals:<br>• Revolutionize threat analysis and understanding<br>• Make cybersecurity accessible for smaller organizations<br>• Transform raw data into actionable intelligence<br>• Support developing economies with cost-effective solutions<br><br>💪 Key Benefits:<br>• Real-time threat data visualization<br>• Interactive maps and dashboards<br>• Customizable threat analysis<br>• Cost-effective solutions<br>• Easy-to-understand insights<br>• Community-driven development<br><br>🔗 <a href="/DeakinThreatmirror/main" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join DeakinThreatmirror')">How to join DeakinThreatmirror</button>"""
+    'deakin_threatmirror': """DeakinThreatmirror? Now that's a fascinating project! 🎯 It's perfect for those who love turning complex data into beautiful, understandable visualizations. Think of it as a crystal ball for cybersecurity threats!<br><br>Here's what makes it special:<br>• 🎯 Open-source threat intelligence platform<br>• 📊 Advanced visual analytics for threat data<br>• 🤖 Machine learning-powered insights<br>• 🌐 Perfect for SMEs and developing economies<br>• 💡 User-friendly interface for complex data<br>• 🔄 Real-time threat feed aggregation<br><br>🎯 Project Goals:<br>• Revolutionize threat analysis and understanding<br>• Make cybersecurity accessible for smaller organizations<br>• Transform raw data into actionable intelligence<br>• Support developing economies with cost-effective solutions<br><br>💪 Key Benefits:<br>• Real-time threat data visualization<br>• Interactive maps and dashboards<br>• Customizable threat analysis<br>• Cost-effective solutions<br>• Easy-to-understand insights<br>• Community-driven development<br><br>🔗 <a href="/deakinThreatmirror/" class="learn-more-link">Learn more here</a><br><br>Want to get involved? Try asking:<br><button class="suggestion-btn" onclick="sendMessage('how to join DeakinThreatmirror')">How to join DeakinThreatmirror</button>"""
 }
 
 @csrf_exempt
@@ -358,6 +362,128 @@ def chat_view(request):
             message_lower = message_for_matching.lower()
             response_text = None # Placeholder for the final bot response text
 
+            # --- Leaderboard Special Handling ---
+            if 'leaderboard' in message_lower or 'leader board' in message_lower:
+                # Detect specific category if mentioned
+                categories = LeaderBoardTable.objects.values_list('category', flat=True).distinct()
+                filter_category = None
+                for cat in categories:
+                    if cat.lower() in message_lower:
+                        filter_category = cat
+                        break
+                # Query top 5
+                qs = LeaderBoardTable.objects.all()
+                if filter_category:
+                    qs = qs.filter(category=filter_category)
+                top5 = qs.order_by('-total_points')[:5]
+                
+                # Build styled HTML response
+                response_text = """
+                <div class="chatbot-card">
+                    <p>Hi! Here's who's leading the leaderboard"""
+                if filter_category:
+                    response_text += f" in {filter_category}"
+                response_text += """:</p>
+                    
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>🏆 Rank</th>
+                                <th>👤 First Name</th>
+                                <th>👤 Last Name</th>
+                                <th>🧠 Category</th>
+                                <th>🔥 Points</th>
+                            </tr>
+                        </thead>
+                        <tbody>"""
+                
+                for idx, entry in enumerate(top5, start=1):
+                    rank_class = ' class="rank-1"' if idx == 1 else ''
+                    response_text += f"""
+                            <tr{rank_class}>
+                                <td>{idx}</td>
+                                <td>{entry.user.first_name}</td>
+                                <td>{entry.user.last_name}</td>
+                                <td>{entry.category}</td>
+                                <td>{entry.total_points}</td>
+                            </tr>"""
+                
+                response_text += """
+                        </tbody>
+                    </table>"""
+
+                # Add user rank if logged in
+                if session.user:
+                    try:
+                        # Determine user's rank
+                        all_qs = LeaderBoardTable.objects.filter(category=filter_category) if filter_category else LeaderBoardTable.objects.all()
+                        ordered_ids = list(all_qs.order_by('-total_points').values_list('user_id', flat=True))
+                        rank = ordered_ids.index(session.user.id) + 1
+                        user_entry = all_qs.get(user=session.user)
+                        response_text += f"""
+                    <div class="footer">
+                        🎯 You are currently ranked <span class="highlight">#{rank}</span> with <span class="highlight">{user_entry.total_points}</span> points"""
+                        if filter_category:
+                            response_text += f" in {filter_category}"
+                        response_text += "!</div>"
+                    except Exception:
+                        pass
+                
+                response_text += """
+                </div>
+                <style>
+                    .chatbot-card {
+                        background: #f8f9fa;
+                        padding: 1rem;
+                        border-radius: 8px;
+                        margin: 0.5rem 0;
+                    }
+                    .chatbot-card p {
+                        margin: 0 0 1rem 0;
+                        font-size: inherit;
+                    }
+                    .chatbot-card table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin: 0.5rem 0;
+                        background: white;
+                        border-radius: 4px;
+                    }
+                    .chatbot-card th, .chatbot-card td {
+                        padding: 0.5rem;
+                        text-align: center;
+                        border-bottom: 1px solid #eee;
+                        font-size: inherit;
+                    }
+                    .chatbot-card th {
+                        background-color: #f8f9fa;
+                        color: #444;
+                        font-weight: normal;
+                        font-size: inherit;
+                    }
+                    .chatbot-card .rank-1 {
+                        background: #fff9e6;
+                    }
+                    .chatbot-card .highlight {
+                        color: #0b7285;
+                        font-weight: bold;
+                    }
+                    .chatbot-card .footer {
+                        text-align: center;
+                        font-size: 1rem;
+                        color: #333;
+                        margin-top: 1rem;
+                    }
+                </style>
+                """
+                
+                # Save and return
+                ChatMessage.objects.create(session=session, message=message, is_bot=False)
+                ChatMessage.objects.create(session=session, message=response_text, is_bot=True)
+                final = response_text  # No need to add personalized greeting since it's in the card
+                return JsonResponse({'response': final, 'session_id': session_id, 'typing_delay': 2000})
+            # --- End Leaderboard Handling ---
+
             # First try direct project name matching in the message
             for project_key, specific_response in project_responses.items():
                 project_key_norm = project_key.lower()
@@ -405,13 +531,51 @@ def chat_view(request):
                                 break # Exit inner loop
                         if response_text: break # Exit outer loop
 
+            # Check for custom responses before proceeding with general search
+            if response_text is None:
+                logger.info("Checking for custom responses")
+                try:
+                    # Get all active custom responses ordered by priority
+                    custom_responses = CustomChatbotResponse.objects.filter(is_active=True).order_by('-priority')
+                    
+                    # Check each custom response's keywords against the message
+                    for custom_response in custom_responses:
+                        keywords = [k.strip().lower() for k in custom_response.keywords.split(',')]
+                        message_words = message_lower.split()
+                        
+                        # Check if any of the keywords match
+                        if any(keyword in message_lower for keyword in keywords):
+                            logger.debug(f"Custom response match found for keywords: {keywords}")
+                            response_text = custom_response.response
+                            
+                            # If this response is associated with a project, append project info
+                            if custom_response.project:
+                                project_key = custom_response.project.name.lower().replace(' ', '_')
+                                if project_key in project_responses:
+                                    response_text += "<br><br>Here's more information about the project:<br><br>"
+                                    response_text += project_responses[project_key]
+                            
+                            break
+                except Exception as e:
+                    logger.error(f"Error checking custom responses: {str(e)}")
+
             # If still no response, proceed with general search
             if response_text is None:
-                logger.info("No predefined response found, using search engine")
+                logger.info("No predefined or custom response found, using search engine")
                 try:
-                    search_results = search_engine.search(message, user_email=user_info.get('user_email'))
+                    search_results = search_engine.search(message, user=user_info.get('user_email'))
                     logger.info(f"Got search results for '{message}'")
-                    response_text = search_results # Assuming search returns formatted text
+                    formatted_results = search_engine.format_search_results(search_results, message)
+                    
+                    # Convert formatted results to a readable response
+                    if formatted_results['total'] > 0:
+                        response_text = "Here's what I found:<br><br>"
+                        for result in formatted_results['results']:
+                            response_text += f"<strong>{result['title']}</strong><br>"
+                            response_text += f"{result['description']}<br>"
+                            response_text += f"<a href='{result['url']}' class='learn-more-link'>Learn more</a><br><br>"
+                    else:
+                        response_text = "I couldn't find any relevant information about that. Could you try rephrasing your question?"
                 except Exception as e:
                     logger.error(f"Search error: {str(e)}")
                     response_text = "I'm sorry, but I encountered an error while processing your request. Please try again."
@@ -462,7 +626,7 @@ def chat_view(request):
             return JsonResponse({'error': "An unexpected server error occurred."}, status=500)
 
     # For GET requests, render the chat page
-    return render(request, 'chatbot/chat.html', {'project_name': 'Hardie Hat Chat'})
+    return render(request, 'chatbot_app/chatbot_view.html', {'project_name': 'Hardie Hat Chat'})
 
 # New API endpoints
 @csrf_exempt
@@ -546,10 +710,18 @@ def message_api(request, session_id):
                 <br>Need Any More Help? You can ask me anything about the process!"""
             else:
                 # Use the search engine to process the query
-                search_results = search_engine.process_query(user_message)
+                search_results = search_engine.search(user_message)
+                formatted_results = search_engine.format_search_results(search_results, user_message)
                 
-                # Format the search results into a response
-                response_text = search_engine.format_search_results(search_results, user_message)
+                # Convert formatted results to a readable response
+                if formatted_results['total'] > 0:
+                    response_text = "Here's what I found:<br><br>"
+                    for result in formatted_results['results']:
+                        response_text += f"<strong>{result['title']}</strong><br>"
+                        response_text += f"{result['description']}<br>"
+                        response_text += f"<a href='{result['url']}' class='learn-more-link'>Learn more</a><br><br>"
+                else:
+                    response_text = "I couldn't find any relevant information about that. Could you try rephrasing your question?"
             
             # Save bot response to database
             bot_message = ChatMessage.objects.create(
@@ -809,7 +981,9 @@ def analyze_fuzzy_search(request):
                 word_info['top_matches'].append({
                     'word': match,
                     'similarity': similarity,
-                    'would_be_selected': similarity >= 0.7 and match == matches[0]
+                    'similarity_percent': int(similarity * 100),
+                    'would_be_selected': similarity >= 0.7 and match == matches[0],
+                    'status': 'Selected for correction' if (similarity >= 0.7 and match == matches[0]) else 'Not selected'
                 })
             
             # Sort by similarity
@@ -833,155 +1007,19 @@ def analyze_fuzzy_search(request):
         
         word_analysis.append(word_info)
     
-    # Format the analysis as HTML
-    html_response = f"""
-    <html>
-    <head>
-        <title>Fuzzy Search Analysis: {query}</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 20px; }}
-            h1, h2, h3 {{ color: #333; }}
-            .container {{ max-width: 1200px; margin: 0 auto; }}
-            .word-card {{ 
-                border: 1px solid #ddd; 
-                border-radius: 5px; 
-                padding: 15px; 
-                margin-bottom: 15px;
-                background-color: #f9f9f9;
-            }}
-            .corrected {{ background-color: #e6ffe6; }}
-            .match-table {{ 
-                width: 100%; 
-                border-collapse: collapse; 
-                margin-top: 10px;
-            }}
-            .match-table th, .match-table td {{ 
-                border: 1px solid #ddd; 
-                padding: 8px; 
-                text-align: left;
-            }}
-            .match-table th {{ 
-                background-color: #f2f2f2; 
-            }}
-            .selected {{ 
-                background-color: #e6ffe6; 
-                font-weight: bold;
-            }}
-            .summary {{
-                background-color: #f0f0f0;
-                padding: 15px;
-                border-radius: 5px;
-                margin-bottom: 20px;
-            }}
-            .vocab-sample {{
-                max-height: 200px;
-                overflow-y: auto;
-                border: 1px solid #ddd;
-                padding: 10px;
-                margin-top: 10px;
-                background-color: white;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Fuzzy Search Analysis</h1>
-            
-            <div class="summary">
-                <h2>Query Summary</h2>
-                <p><strong>Original query:</strong> "{query}"</p>
-                <p><strong>Preprocessed query:</strong> "{preprocessed_query}"</p>
-                <p><strong>Corrected query:</strong> "{corrected_query}"</p>
-                <p><strong>Was corrected:</strong> {was_corrected}</p>
-                <p><strong>Vocabulary size:</strong> {len(vocabulary)} terms</p>
-                
-                <h3>Vocabulary Sample</h3>
-                <div class="vocab-sample">
-                    <ul>
-                        {"".join(f"<li>{term}</li>" for term in sorted(vocabulary)[:100])}
-                        {f"<li>... and {len(vocabulary) - 100} more terms</li>" if len(vocabulary) > 100 else ""}
-                    </ul>
-                </div>
-            </div>
-            
-            <h2>Word-by-Word Analysis</h2>
-    """
+    # Prepare context for template
+    context = {
+        'query': query,
+        'preprocessed_query': preprocessed_query,
+        'corrected_query': corrected_query,
+        'was_corrected': was_corrected,
+        'vocabulary_size': len(vocabulary),
+        'vocab_sample': sorted(vocabulary)[:100],
+        'vocab_remaining': max(0, len(vocabulary) - 100),
+        'word_analysis': word_analysis
+    }
     
-    for word_info in word_analysis:
-        card_class = "word-card"
-        if word_info.get('was_corrected', False):
-            card_class += " corrected"
-            
-        html_response += f"""
-            <div class="{card_class}">
-                <h3>Word: "{word_info['original']}"</h3>
-                <p><strong>Length:</strong> {word_info['length']}</p>
-        """
-        
-        if word_info.get('is_stopword', False):
-            html_response += f"""
-                <p><strong>Status:</strong> Stopword (not eligible for correction)</p>
-            """
-        elif word_info.get('is_too_short', False):
-            html_response += f"""
-                <p><strong>Status:</strong> Too short (not eligible for correction)</p>
-            """
-        else:
-            was_corrected = word_info.get('was_corrected', False)
-            corrected_to = word_info.get('corrected_to', word_info['original'])
-            
-            if was_corrected:
-                html_response += f"""
-                    <p><strong>Status:</strong> Corrected from "{word_info['original']}" to "{corrected_to}"</p>
-                """
-            else:
-                html_response += f"""
-                    <p><strong>Status:</strong> No correction needed or no suitable match found</p>
-                """
-            
-            # Add matches table
-            if word_info['top_matches']:
-                html_response += f"""
-                    <h4>Top Matches:</h4>
-                    <table class="match-table">
-                        <tr>
-                            <th>Word</th>
-                            <th>Similarity</th>
-                            <th>Status</th>
-                        </tr>
-                """
-                
-                for match in word_info['top_matches']:
-                    row_class = "selected" if match.get('would_be_selected', False) else ""
-                    status = "Selected for correction" if match.get('would_be_selected', False) else "Not selected"
-                    
-                    html_response += f"""
-                        <tr class="{row_class}">
-                            <td>{match['word']}</td>
-                            <td>{match['similarity']:.4f} ({int(match['similarity'] * 100)}%)</td>
-                            <td>{status}</td>
-                        </tr>
-                    """
-                
-                html_response += """
-                    </table>
-                """
-            else:
-                html_response += """
-                    <p><strong>Matches:</strong> No matches found in vocabulary</p>
-                """
-        
-        html_response += """
-            </div>
-        """
-    
-    html_response += """
-        </div>
-    </body>
-    </html>
-    """
-    
-    return HttpResponse(html_response)
+    return render(request, 'chatbot_app/analyze_fuzzy.html', context)
 
 def test_search_page(request):
     """
@@ -994,6 +1032,10 @@ def test_search_page(request):
     formatted_response = None
     was_corrected = False
     corrected_query = None
+    categories_str = ""
+    search_method = "unknown"
+    sql_queries = []
+    results_json = ""
     
     if query:
         # Process the query
@@ -1005,348 +1047,34 @@ def test_search_page(request):
         # Check if query was corrected
         was_corrected = 'corrected_query' in results
         corrected_query = results.get('corrected_query')
-    
-    # Create the HTML response - avoid nested f-strings by breaking it up
-    html_start = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Search Engine Test</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                margin: 0;
-                padding: 20px;
-                background-color: #f5f5f5;
-            }
-            .container {
-                max-width: 1200px;
-                margin: 0 auto;
-                background-color: white;
-                padding: 20px;
-                border-radius: 5px;
-                box-shadow: 0 0 10px rgba(0,0,0,0.1);
-            }
-            h1, h2, h3 {
-                color: #333;
-            }
-            .search-form {
-                margin-bottom: 20px;
-                padding: 15px;
-                background-color: #f9f9f9;
-                border-radius: 5px;
-            }
-            input[type="text"] {
-                padding: 10px;
-                width: 70%;
-                border: 1px solid #ddd;
-                border-radius: 3px;
-                font-size: 16px;
-            }
-            button {
-                padding: 10px 15px;
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 3px;
-                cursor: pointer;
-                font-size: 16px;
-            }
-            .results-container {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 20px;
-            }
-            .results-box {
-                flex: 1;
-                min-width: 300px;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                padding: 15px;
-                background-color: #f9f9f9;
-                margin-bottom: 20px;
-            }
-            .formatted-response {
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                padding: 15px;
-                background-color: white;
-                margin-top: 10px;
-            }
-            .json-display {
-                background-color: #f5f5f5;
-                padding: 10px;
-                border-radius: 3px;
-                overflow-x: auto;
-                font-family: monospace;
-                white-space: pre-wrap;
-                max-height: 500px;
-                overflow-y: auto;
-            }
-            .correction-notice {
-                background-color: #e7f3fe;
-                border-left: 3px solid #2196F3;
-                padding: 10px;
-                margin-bottom: 15px;
-            }
-            .test-queries {
-                margin-top: 20px;
-            }
-            .test-queries a {
-                display: inline-block;
-                margin: 5px;
-                padding: 5px 10px;
-                background-color: #eee;
-                border-radius: 3px;
-                text-decoration: none;
-                color: #333;
-            }
-            .test-queries a:hover {
-                background-color: #ddd;
-            }
-            .sql-container {
-                margin-top: 20px;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                padding: 15px;
-                background-color: #f9f9f9;
-            }
-            .sql-query {
-                background-color: #272822;
-                color: #f8f8f2;
-                padding: 10px;
-                border-radius: 3px;
-                margin: 10px 0;
-                overflow-x: auto;
-                font-family: monospace;
-            }
-            .query-info {
-                display: flex;
-                justify-content: space-between;
-                background-color: #eee;
-                padding: 5px 10px;
-                border-radius: 3px 3px 0 0;
-                font-size: 12px;
-            }
-            .result-count {
-                font-weight: bold;
-                color: #4CAF50;
-            }
-            .time-taken {
-                font-style: italic;
-                color: #666;
-            }
-            .orm-query {
-                background-color: #f5f5f5;
-                padding: 10px;
-                border-radius: 0 0 3px 3px;
-                font-family: monospace;
-                border-top: none;
-                font-size: 12px;
-            }
-            .tab-container {
-                margin-top: 20px;
-            }
-            .tab {
-                overflow: hidden;
-                border: 1px solid #ccc;
-                background-color: #f1f1f1;
-                border-radius: 5px 5px 0 0;
-            }
-            .tab button {
-                background-color: inherit;
-                float: left;
-                border: none;
-                outline: none;
-                cursor: pointer;
-                padding: 10px 16px;
-                transition: 0.3s;
-                color: #333;
-            }
-            .tab button:hover {
-                background-color: #ddd;
-            }
-            .tab button.active {
-                background-color: #4CAF50;
-                color: white;
-            }
-            .tabcontent {
-                display: none;
-                padding: 15px;
-                border: 1px solid #ccc;
-                border-top: none;
-                border-radius: 0 0 5px 5px;
-            }
-            .tabcontent.active {
-                display: block;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Search Engine Test Page</h1>
-    """
-    
-    # Add the search form with the query value
-    search_form = f"""
-            <div class="search-form">
-                <form method="GET" action="">
-                    <input type="text" name="q" value="{query}" placeholder="Enter your search query..." />
-                    <button type="submit">Search</button>
-                </form>
-                
-                <div class="test-queries">
-                    <h3>Try these test queries:</h3>
-                    <a href="?q=appatack">appatack</a>
-                    <a href="?q=smishing">smishing</a>
-                    <a href="?q=cyber+atack">cyber atack</a>
-                    <a href="?q=vr+security">vr security</a>
-                    <a href="?q=malware+visulaization">malware visulaization</a>
-                    <a href="?q=penetration+testing">penetration testing</a>
-                    <a href="?q=courses">courses</a>
-                    <a href="?q=course">course</a>
-                </div>
-            </div>
-    """
-    
-    # Add spelling correction notice if applicable
-    correction_notice = ""
-    if was_corrected:
-        correction_notice = f"""
-            <div class="correction-notice">
-                <strong>Spelling correction:</strong> The query "{query}" was corrected to "{corrected_query}".
-            </div>
-        """
-    
-    # Add results if we have any
-    results_html = ""
-    if results:
-        results_json = str(results).replace("<", "&lt;").replace(">", "&gt;")
-        categories_str = ", ".join(results.get('categories', []))
-        total_results = results.get('total_results', 0)
+        
+        # Get categories string
+        if 'categories' in results:
+            categories_str = ", ".join(results.get('categories', []))
+        
+        # Get search method
         search_method = results.get('debug_info', {}).get('query_info', {}).get('method', 'unknown')
         
-        # Create tabs HTML
-        tab_html = """
-            <div class="tab">
-                <button class="tablinks active" onclick="openTab(event, 'ResultsTab')">Results</button>
-                <button class="tablinks" onclick="openTab(event, 'SQLTab')">SQL Queries</button>
-                <button class="tablinks" onclick="openTab(event, 'RawTab')">Raw JSON</button>
-            </div>
-        """
-        
-        # Results tab content
-        results_tab = f"""
-            <div id="ResultsTab" class="tabcontent active">
-                <h2>Search Results</h2>
-                <p>Query: <strong>"{query}"</strong></p>
-                <p>Total results: <strong>{total_results}</strong></p>
-                <p>Categories: <strong>{categories_str}</strong></p>
-                <p>Search method: <strong>{search_method}</strong></p>
-                
-                <h3>Formatted Response</h3>
-                <div class="formatted-response">{formatted_response}</div>
-            </div>
-        """
-        
-        # SQL queries tab content
-        sql_tab = """
-            <div id="SQLTab" class="tabcontent">
-                <h2>SQL Queries</h2>
-                <p>This shows how Django ORM translated your search into SQL queries:</p>
-        """
-        
-        # Add SQL queries if available
+        # Get SQL queries
         sql_queries = results.get('debug_info', {}).get('sql_queries', [])
-        if sql_queries:
-            for query_info in sql_queries:
-                model = query_info.get('model', 'Unknown')
-                orm_query = query_info.get('orm_query', 'No ORM query captured')
-                sql = query_info.get('sql', 'No SQL captured')
-                time_taken = query_info.get('time', 0)
-                result_count = query_info.get('result_count', 0)
-                
-                sql_tab += f"""
-                    <div class="sql-container">
-                        <h3>Model: {model}</h3>
-                        <div class="query-info">
-                            <span class="result-count">Results: {result_count}</span>
-                            <span class="time-taken">Time: {time_taken:.4f}s</span>
-                        </div>
-                        <div class="sql-query">{sql}</div>
-                        <div class="orm-query">Django ORM: {orm_query}</div>
-                    </div>
-                """
-        else:
-            sql_tab += """
-                <p>No SQL queries were captured for this search.</p>
-            """
         
-        sql_tab += """
-            </div>
-        """
-        
-        # Raw JSON tab content
-        raw_tab = f"""
-            <div id="RawTab" class="tabcontent">
-                <h2>Raw Search Results</h2>
-                <div class="json-display">{results_json}</div>
-            </div>
-        """
-        
-        # Combine all tabs
-        results_html = tab_html + results_tab + sql_tab + raw_tab
+        # Format results as JSON for display
+        results_json = str(results).replace("<", "&lt;").replace(">", "&gt;")
     
-    # Add the closing HTML with tab functionality
-    html_end = """
-        </div>
-        
-        <script>
-            // Tab functionality
-            function openTab(evt, tabName) {
-                var i, tabcontent, tablinks;
-                
-                // Hide all tab content
-                tabcontent = document.getElementsByClassName("tabcontent");
-                for (i = 0; i < tabcontent.length; i++) {
-                    tabcontent[i].style.display = "none";
-                    tabcontent[i].classList.remove("active");
-                }
-                
-                // Remove active class from all tab buttons
-                tablinks = document.getElementsByClassName("tablinks");
-                for (i = 0; i < tablinks.length; i++) {
-                    tablinks[i].classList.remove("active");
-                }
-                
-                // Show the current tab and add active class to the button
-                document.getElementById(tabName).style.display = "block";
-                document.getElementById(tabName).classList.add("active");
-                evt.currentTarget.classList.add("active");
-            }
-            
-            // Enable buttons in the formatted response
-            document.addEventListener('DOMContentLoaded', function() {
-                const formattedResponse = document.querySelector('.formatted-response');
-                if (formattedResponse) {
-                    const buttons = formattedResponse.querySelectorAll('.suggestion-btn');
-                    buttons.forEach(button => {
-                        button.addEventListener('click', function() {
-                            const message = this.getAttribute('onclick').replace('sendMessage(\'', '').replace('\')', '');
-                            window.location.href = '?q=' + encodeURIComponent(message);
-                        });
-                    });
-                }
-            });
-        </script>
-    </body>
-    </html>
-    """
+    # Render the template with all the data
+    context = {
+        'query': query,
+        'results': results,
+        'formatted_response': formatted_response,
+        'was_corrected': was_corrected,
+        'corrected_query': corrected_query,
+        'categories_str': categories_str,
+        'search_method': search_method,
+        'sql_queries': sql_queries,
+        'results_json': results_json
+    }
     
-    # Combine all the parts
-    complete_html = html_start + search_form + correction_notice + results_html + html_end
-    
-    return HttpResponse(complete_html)
+    return render(request, 'chatbot_app/search_test.html', context)
 
 def format_search_results(results, query):
     """Format search results into a readable response for the chatbot"""

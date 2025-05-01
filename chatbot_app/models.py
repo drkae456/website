@@ -14,7 +14,7 @@ class ChatSession(models.Model):
 
     def __str__(self):
         if self.user:
-            return f"Chat Session {self.session_id} - {self.user.username}"
+            return f"Chat Session {self.session_id} - {self.user.email}"
         return f"Chat Session {self.session_id} - Guest"
 
 
@@ -120,4 +120,25 @@ Each project has its own dedicated page with more details. You can join any proj
         )
 
         # Add any other default entries here if needed
-        pass 
+        pass
+
+
+class CustomChatbotResponse(models.Model):
+    """Stores custom responses for the chatbot based on keywords"""
+    keywords = models.TextField(help_text="Comma-separated keywords that will trigger this response")
+    response = models.TextField(help_text="The response that the chatbot should give when keywords are matched")
+    priority = models.IntegerField(default=0, help_text="Higher priority responses will be checked first (0-10)")
+    is_active = models.BooleanField(default=True, help_text="Whether this custom response is currently active")
+    project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True, 
+                              help_text="Associate this response with a specific project (optional)")
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_updated = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True)
+
+    class Meta:
+        ordering = ['-priority', '-created_at']
+        verbose_name = "Custom Chatbot Response"
+        verbose_name_plural = "Custom Chatbot Responses"
+
+    def __str__(self):
+        return f"Response for: {self.keywords[:50]}..." 

@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('home', '0017_merge_0015_merge_20240508_2315_0016_alter_webpage_url'),
+        ('home', '0014_webpage'),
     ]
 
     operations = [

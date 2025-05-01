@@ -202,8 +202,8 @@ class ClientRegistrationForm(UserCreationForm):
     # .......................................
 
 class UserLoginForm(AuthenticationForm):
-    username = UsernameField(
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "example@deakin.edu.au"})
+    username = forms.EmailField(
+        widget=forms.EmailInput(attrs={"class": "form-control", "placeholder": "example@deakin.edu.au"})
     )
     password = forms.CharField(
         label=_("Password"),

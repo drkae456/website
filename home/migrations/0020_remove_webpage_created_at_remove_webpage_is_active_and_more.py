@@ -10,16 +10,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RemoveField(
-            model_name='webpage',
-            name='created_at',
-        ),
-        migrations.RemoveField(
-            model_name='webpage',
-            name='is_active',
-        ),
-        migrations.RemoveField(
-            model_name='webpage',
-            name='updated_at',
-        ),
+        # No-op migration - fields already removed
     ]
