@@ -5,7 +5,26 @@ Hardhat Enterprises is an organization that aims to create cyber weapons and too
 # [Hardhat Enterprises](hardhatwebdev2024.pythonanywhere.com/) T2 2024
 [Note: The Hardhat website has been deployed already. Below is the rundown of how it can be deployed from PythonAnywhere. For T1 2024, it already has been deployed. It can be accessed through this domain: hardhatwebdev2024.pythonanywhere.com ]
 
-Deploying HardHat Website from Python Anywhere Platform
+## Chatbot Enhancements with TextBlob
+
+The Hardhat website includes a chatbot with enhanced natural language processing capabilities powered by TextBlob. This includes:
+
+- **Sentiment analysis**: Detecting the emotional tone of user messages (positive, negative, neutral)
+- **Part-of-speech tagging**: Identifying nouns, verbs, adjectives, etc. in text
+- **Spelling correction**: Automatically detecting and fixing spelling errors
+- **Language translation**: Translating between different languages
+- **Noun phrase extraction**: Identifying important phrases in user queries
+- **Improved search**: Better keyword extraction for more relevant results
+
+To use these features, simply interact with the chatbot through the chat interface. The system will automatically:
+- Correct spelling mistakes
+- Analyze sentiment
+- Extract key phrases
+- Provide more relevant search results
+
+A dedicated API endpoint for text analysis is also available at `/chatbot_app/api/analyze-text/` which accepts POST requests with a JSON body containing a `text` field.
+
+## Deploying HardHat Website from Python Anywhere Platform
 For launching the Hardhat website, we have chosen the Python Anywhere platform since it offers free tiers and the website can be hosted for three months without any charge or cost. 
 In this document, I will describe the process of deploying the website from the platform with the steps necessary.
 

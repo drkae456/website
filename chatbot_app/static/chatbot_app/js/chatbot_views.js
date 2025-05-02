@@ -65,18 +65,131 @@ function initChat() {
         addSuggestedQuestions();
     }
     
-    // Add a message to the chat box
-    function addMessage(message, isBot = true) {
-        const messageElement = document.createElement('div');
-        messageElement.classList.add('message');
-        messageElement.classList.add(isBot ? 'bot-message' : 'user-message');
-        messageElement.innerHTML = message;
-        chatBox.appendChild(messageElement);
-        chatBox.scrollTop = chatBox.scrollHeight;
+    // Function to add a message to the chat box
+    function addMessage(messageObject, isLoadingHistory = false) {
+        if (!chatBox) {
+            chatBox = document.getElementById("chat-box");
+        }
+        if (!chatBox) {
+            console.error("Chat box not found, cannot add message.");
+            return;
+        }
+        const messageDiv = document.createElement('div');
+        const isUser = messageObject.sender === 'user';
+        const isBot = messageObject.sender === 'bot';
+        const isIndicator = messageObject.sender === 'indicator';
+
+        messageDiv.className = `message ${isUser ? 'user-message' : isBot ? 'bot-message' : 'typing-indicator'}`;
+
+        if (isUser) {
+            const prefix = `${currentUser.isLoggedIn ? currentUser.name : 'Guest'}: `;
+            messageDiv.textContent = prefix + messageObject.text;
+        } else if (isBot) {
+            let formattedMessage = messageObject.text || "";
+            
+            // Check if the message contains a formatted response
+            if (formattedMessage.includes('formatted-response')) {
+                messageDiv.innerHTML = formattedMessage;
+            } else {
+                // Add bot prefix and format message
+                const prefix = '<span class="bot-prefix">Hardhat Assistant:</span> ';
+                formattedMessage = formattedMessage.replace(/\\n/g, '<br>');
+                formattedMessage = formattedMessage.replace(/⸻/g, '<hr>');
+                
+                // Format emojis and special characters
+                formattedMessage = formattedMessage.replace(/🟩|🟨|🟥/g, match => `<span class="difficulty-emoji">${match}</span>`);
+                formattedMessage = formattedMessage.replace(/📘/g, '<span class="challenge-title">📘</span>');
+                formattedMessage = formattedMessage.replace(/🔥/g, '<span class="points-emoji">🔥</span>');
+                formattedMessage = formattedMessage.replace(/🔗/g, '<span class="link-emoji">🔗</span>');
+                
+                // Format links
+                const pathRegex = /\/challenges\/detail\/(\d+)/g;
+                formattedMessage = formattedMessage.replace(pathRegex, (match, id) => 
+                    `<a href="${match}" class="challenge-link" target="_blank">Take Challenge</a>`
+                );
+                
+                messageDiv.innerHTML = prefix + formattedMessage;
+            }
+            
+            // Add click handlers for "Show more" buttons
+            if (formattedMessage.includes('Show me more')) {
+                const showMoreButtons = messageDiv.querySelectorAll('.action');
+                showMoreButtons.forEach(button => {
+                    button.addEventListener('click', () => {
+                        const query = button.textContent.trim();
+                        sendMessage(query);
+                    });
+                });
+            }
+        } else if (isIndicator) {
+            messageDiv.id = 'typing-indicator';
+            messageDiv.textContent = messageObject.text;
+        }
+
+        chatBox.appendChild(messageDiv);
+
+        if ((isUser || isBot) && !isLoadingHistory) {
+            messageObject.timestamp = messageObject.timestamp || Date.now();
+            chatHistory.push(messageObject);
+            saveChatHistory();
+        }
+
+        // Adjust scroll behavior based on the message type
+        if (isBot) {
+            // For bot messages, scroll to show the start of the message
+            scrollToMessageStart(messageDiv);
+        } else {
+            // For user messages and typing indicators, scroll to bottom
+            scrollChatToBottom();
+        }
     }
     
-    // Add a bot message
+    // Initialize interactive elements in formatted responses
+    function initializeFormattedResponse(messageElement) {
+        // Handle tables
+        const tables = messageElement.querySelectorAll('.search-results-table');
+        tables.forEach(table => {
+            // Add hover effect to table rows
+            const rows = table.querySelectorAll('tbody tr');
+            rows.forEach(row => {
+                row.addEventListener('mouseover', () => {
+                    row.style.backgroundColor = '#f8f9fa';
+                });
+                row.addEventListener('mouseout', () => {
+                    row.style.backgroundColor = '';
+                });
+            });
+        });
+        
+        // Handle result titles
+        const titles = messageElement.querySelectorAll('.result-title');
+        titles.forEach(title => {
+            title.addEventListener('click', (e) => {
+                e.preventDefault();
+                const text = title.textContent;
+                messageInput.value = `Tell me more about ${text}`;
+                messageInput.focus();
+            });
+        });
+    }
+    
+    // Enhanced bot message handling
     function addBotMessage(message) {
+        // Remove any existing typing indicator
+        hideTypingIndicator();
+        
+        // Check if the message is a JSON string containing formatted content
+        try {
+            const messageData = JSON.parse(message);
+            if (messageData.formatted_response) {
+                addMessage(messageData, true);
+                return;
+            }
+        } catch (e) {
+            // Not JSON, continue with normal message
+        }
+        
+        // Regular message handling
         addMessage(message, true);
     }
     
@@ -118,12 +231,10 @@ function initChat() {
         chatBox.scrollTop = chatBox.scrollHeight;
     }
     
-    // Send a message
-    function sendMessage(message = null) {
-        // Get message from input or parameter
+    // Enhanced send message function
+    async function sendMessage(message = null) {
         const messageText = message || messageInput.value.trim();
         
-        // Don't send empty messages
         if (!messageText) return;
         
         // Add user message to chat
@@ -137,50 +248,95 @@ function initChat() {
         // Show typing indicator
         showTypingIndicator();
         
-        // Send message to server
-        fetch('/chat/', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                message: messageText,
-                session_id: sessionId,
-                user_info: {
-                    is_authenticated: false,
-                    username: 'Guest'
-                }
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            // Hide typing indicator
-            hideTypingIndicator();
+        try {
+            const response = await fetch(`/chatbot/api/session/${sessionId}/message/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({
+                    message: messageText,
+                    user_info: {
+                        is_authenticated: false,
+                        username: 'Guest'
+                    }
+                })
+            });
             
-            // Store session ID if provided
-            if (data.session_id) {
-                sessionId = data.session_id;
-                localStorage.setItem('chatSessionId', sessionId);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
             
-            // Add bot response with delay
-            setTimeout(() => {
-                addBotMessage(data.response);
-            }, data.typing_delay || 500);
-        })
-        .catch(error => {
+            const data = await response.json();
+            
             // Hide typing indicator
             hideTypingIndicator();
             
-            // Show error message
-            addBotMessage("Sorry, I'm having trouble connecting. Please try again later.");
-            console.error('Error:', error);
+            if (data.status === 'error') {
+                throw new Error(data.message || 'Unknown error occurred');
+            }
             
-            // Update connection status
-            connectionStatus.innerText = 'Connection error. Please try again.';
-            connectionStatus.classList.remove('connecting', 'connected');
-            connectionStatus.classList.add('error');
-        });
+            // Add bot response with delay for natural feel
+            setTimeout(() => {
+                if (data.formatted_response) {
+                    // Handle formatted response
+                    addBotMessage(JSON.stringify({
+                        formatted_response: data.formatted_response
+                    }));
+                } else {
+                    // Handle regular response
+                    addBotMessage(data.response);
+                }
+            }, 500);
+            
+        } catch (error) {
+            console.error('Error:', error);
+            handleError(error);
+        }
+    }
+    
+    // Error handling function
+    function handleError(error) {
+        hideTypingIndicator();
+        
+        const errorMessage = error.message === 'Failed to fetch'
+            ? `<div class="error-message">I'm having trouble connecting to the server. Please check your internet connection and try again.</div>`
+            : `<div class="error-message">I encountered an error processing your message. Please try again.</div>`;
+        
+        addBotMessage(errorMessage);
+        
+        // Update connection status
+        updateConnectionStatus('error');
+    }
+    
+    // Update connection status
+    function updateConnectionStatus(status) {
+        const statusElement = document.getElementById('connection-status');
+        if (!statusElement) return;
+        
+        statusElement.classList.remove('connecting', 'connected', 'error');
+        
+        switch (status) {
+            case 'connecting':
+                statusElement.innerText = 'Connecting to Hardie Hat...';
+                statusElement.classList.add('connecting');
+                break;
+            case 'connected':
+                statusElement.innerText = 'Connected to Hardie Hat';
+                statusElement.classList.add('connected');
+                break;
+            case 'error':
+                statusElement.innerText = 'Connection error. Please try again.';
+                statusElement.classList.add('error');
+                // Attempt to reconnect after 30 seconds
+                setTimeout(() => {
+                    if (statusElement.classList.contains('error')) {
+                        updateConnectionStatus('connected');
+                    }
+                }, 30000);
+                break;
+        }
     }
     
     // Event listeners
@@ -197,4 +353,58 @@ function initChat() {
     
     // Initialize the chat
     initializeChat();
-} 
+}
+
+// Add styles for the new formatting
+const styles = `
+.challenge-title {
+    font-size: 1.2em;
+    margin-right: 5px;
+}
+
+.difficulty-emoji {
+    font-size: 1.1em;
+    margin-right: 3px;
+}
+
+.points-emoji {
+    color: #ff6b6b;
+    margin-right: 3px;
+}
+
+.link-emoji {
+    color: #0366d6;
+    margin-right: 3px;
+}
+
+.challenge-link {
+    color: #0366d6;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.challenge-link:hover {
+    text-decoration: underline;
+}
+
+hr {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 10px 0;
+}
+
+.bot-message .action {
+    color: #0366d6;
+    cursor: pointer;
+    margin-top: 5px;
+}
+
+.bot-message .action:hover {
+    text-decoration: underline;
+}
+`;
+
+// Add the styles to the document
+const styleSheet = document.createElement("style");
+styleSheet.textContent = styles;
+document.head.appendChild(styleSheet); 

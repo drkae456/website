@@ -1,0 +1,272 @@
+{% load static %}
+
+{# Announcements Template #}
+{% macro format_announcement(result) %}
+<div class="search-result announcement">
+    <div class="result-header">
+        📢 {{ result.title }}
+        <span class="badge bg-info">Announcement</span>
+        {% if result.date %}
+        <span class="date">{{ result.date|date:"M d, Y" }}</span>
+        {% endif %}
+    </div>
+    <div class="result-content">
+        {{ result.content|truncatewords:50 }}
+    </div>
+    {% if result.url %}
+    <a href="{{ result.url }}" class="btn btn-sm btn-outline-primary mt-2">Read More</a>
+    {% endif %}
+</div>
+{% endmacro %}
+
+{# Articles Template #}
+{% macro format_article(result) %}
+<div class="search-result article">
+    <div class="result-header">
+        📝 {{ result.title }}
+        <span class="badge bg-primary">Article</span>
+        {% if result.author %}
+        <span class="author">by {{ result.author }}</span>
+        {% endif %}
+    </div>
+    <div class="result-content">
+        {{ result.content|truncatewords:50 }}
+    </div>
+    <div class="result-metadata">
+        {% if result.category %}
+        <span class="category">{{ result.category }}</span>
+        {% endif %}
+        {% if result.date %}
+        <span class="date">{{ result.date|date:"M d, Y" }}</span>
+        {% endif %}
+    </div>
+    <a href="{{ result.url }}" class="btn btn-sm btn-outline-primary mt-2">Read Article</a>
+</div>
+{% endmacro %}
+
+{# Contact Submissions Template #}
+{% macro format_contact_submission(result) %}
+<div class="search-result contact-submission">
+    <div class="result-header">
+        ✉️ {{ result.subject }}
+        <span class="badge bg-secondary">Contact Form</span>
+    </div>
+    <div class="result-content">
+        <p><strong>From:</strong> {{ result.name }} ({{ result.email }})</p>
+        <p>{{ result.message|truncatewords:30 }}</p>
+    </div>
+    <div class="result-metadata">
+        <span class="date">{{ result.submitted_at|date:"M d, Y H:i" }}</span>
+    </div>
+</div>
+{% endmacro %}
+
+{# Courses Template #}
+{% macro format_course(result) %}
+<div class="search-result course">
+    <div class="result-header">
+        📚 {{ result.title }}
+        <span class="badge bg-success">Course</span>
+    </div>
+    <div class="result-content">
+        <p><strong>Code:</strong> {{ result.code }}</p>
+        <p>{{ result.description|truncatewords:50 }}</p>
+    </div>
+    <div class="result-metadata">
+        <span class="duration">{{ result.duration }}</span>
+        <span class="level">{{ result.level }}</span>
+    </div>
+    <a href="{{ result.url }}" class="btn btn-sm btn-outline-success mt-2">View Course</a>
+</div>
+{% endmacro %}
+
+{# Cyber Challenges Template #}
+{% macro format_challenge(result) %}
+<div class="search-result challenge">
+    <div class="result-header">
+        🎯 {{ result.title }}
+        <span class="badge bg-danger">Challenge</span>
+        <span class="badge bg-{{ result.difficulty|lower }}">{{ result.difficulty }}</span>
+    </div>
+    <div class="result-content">
+        {{ result.description|truncatewords:50 }}
+    </div>
+    <div class="result-metadata">
+        <span class="points">{{ result.points }} Points</span>
+        <span class="category">{{ result.category }}</span>
+    </div>
+    <a href="{{ result.url }}" class="btn btn-sm btn-outline-danger mt-2">Take Challenge</a>
+</div>
+{% endmacro %}
+
+{# Jobs Template #}
+{% macro format_job(result) %}
+<div class="search-result job">
+    <div class="result-header">
+        💼 {{ result.title }}
+        <span class="badge bg-primary">Job</span>
+    </div>
+    <div class="result-content">
+        {{ result.description|truncatewords:50 }}
+    </div>
+    <div class="result-metadata">
+        <span class="location">📍 {{ result.location }}</span>
+        <span class="type">{{ result.type }}</span>
+        {% if result.salary %}
+        <span class="salary">💰 {{ result.salary }}</span>
+        {% endif %}
+    </div>
+    <a href="{{ result.url }}" class="btn btn-sm btn-outline-primary mt-2">View Job</a>
+</div>
+{% endmacro %}
+
+{# Projects Template #}
+{% macro format_project(result) %}
+<div class="search-result project">
+    <div class="result-header">
+        🚀 {{ result.title }}
+        <span class="badge bg-info">Project</span>
+    </div>
+    <div class="result-content">
+        {{ result.description|truncatewords:50 }}
+    </div>
+    <div class="result-metadata">
+        <span class="status">Status: {{ result.status }}</span>
+        {% if result.team_size %}
+        <span class="team">Team: {{ result.team_size }}</span>
+        {% endif %}
+    </div>
+    <a href="{{ result.url }}" class="btn btn-sm btn-outline-info mt-2">View Project</a>
+</div>
+{% endmacro %}
+
+{# Skills Template #}
+{% macro format_skill(result) %}
+<div class="search-result skill">
+    <div class="result-header">
+        🎯 {{ result.name }}
+        <span class="badge bg-success">Skill</span>
+    </div>
+    <div class="result-content">
+        {{ result.description|truncatewords:50 }}
+    </div>
+    <div class="result-metadata">
+        <span class="category">{{ result.category }}</span>
+        {% if result.level %}
+        <span class="level">Level: {{ result.level }}</span>
+        {% endif %}
+    </div>
+    <a href="{{ result.url }}" class="btn btn-sm btn-outline-success mt-2">Learn More</a>
+</div>
+{% endmacro %}
+
+{# Users Template #}
+{% macro format_user(result) %}
+<div class="search-result user">
+    <div class="result-header">
+        👤 {{ result.name }}
+        <span class="badge bg-secondary">User</span>
+    </div>
+    <div class="result-content">
+        {% if result.bio %}
+        <p>{{ result.bio|truncatewords:30 }}</p>
+        {% endif %}
+    </div>
+    <div class="result-metadata">
+        {% if result.role %}
+        <span class="role">{{ result.role }}</span>
+        {% endif %}
+        {% if result.joined_date %}
+        <span class="joined">Joined: {{ result.joined_date|date:"M Y" }}</span>
+        {% endif %}
+    </div>
+    {% if result.url %}
+    <a href="{{ result.url }}" class="btn btn-sm btn-outline-secondary mt-2">View Profile</a>
+    {% endif %}
+</div>
+{% endmacro %}
+
+{# Webpage Template #}
+{% macro format_webpage(result) %}
+<div class="search-result webpage">
+    <div class="result-header">
+        🌐 {{ result.title }}
+        <span class="badge bg-primary">Page</span>
+    </div>
+    <div class="result-content">
+        {{ result.description|truncatewords:50 }}
+    </div>
+    <div class="result-metadata">
+        {% if result.last_updated %}
+        <span class="updated">Updated: {{ result.last_updated|date:"M d, Y" }}</span>
+        {% endif %}
+    </div>
+    <a href="{{ result.url }}" class="btn btn-sm btn-outline-primary mt-2">Visit Page</a>
+</div>
+{% endmacro %}
+
+{# CSS Styles #}
+<style>
+.search-result {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.result-header {
+    font-size: 1.1em;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #333;
+}
+
+.result-content {
+    color: #666;
+    margin: 8px 0;
+}
+
+.result-metadata {
+    font-size: 0.9em;
+    color: #888;
+    margin-top: 8px;
+}
+
+.result-metadata span {
+    margin-right: 16px;
+}
+
+.badge {
+    font-size: 0.8em;
+    padding: 4px 8px;
+    margin-left: 8px;
+}
+
+.btn-sm {
+    font-size: 0.9em;
+    padding: 4px 12px;
+}
+
+/* Difficulty badge colors */
+.bg-easy { background-color: #28a745; }
+.bg-medium { background-color: #ffc107; }
+.bg-hard { background-color: #dc3545; }
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .search-result {
+        padding: 12px;
+    }
+    
+    .result-header {
+        font-size: 1em;
+    }
+    
+    .result-metadata span {
+        display: block;
+        margin-bottom: 4px;
+    }
+}
+</style> 

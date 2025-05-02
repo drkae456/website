@@ -21,15 +21,16 @@ class ChatSession(models.Model):
 class ChatMessage(models.Model):
     """Stores individual messages within a chat session"""
     session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name='messages')
-    is_bot = models.BooleanField(default=False)  # True for bot messages, False for user messages
+    sender = models.CharField(max_length=50, default='user', help_text="Either 'user' or 'bot'")
     message = models.TextField()
+    metadata = models.JSONField(null=True, blank=True, help_text="Additional data about the message, like sentiment analysis")
     timestamp = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['timestamp']
 
     def __str__(self):
-        return f"{'Bot' if self.is_bot else 'User'} message at {self.timestamp}"
+        return f"{self.sender} message at {self.timestamp}"
 
 
 class CompanyInformation(models.Model):
@@ -82,45 +83,59 @@ class ProductService(models.Model):
         return self.name
 
 
+class PageContentManager(models.Manager):
+    def create_default_entries(self):
+        """Create default entries if none exist."""
+        if not self.exists():
+            defaults = [
+                {
+                    'title': 'AppAttack',
+                    'content': 'AppAttack is our flagship security testing platform that helps identify vulnerabilities in mobile applications.',
+                    'keywords': 'appattack, security, mobile, testing, vulnerabilities',
+                    'priority': 100
+                },
+                {
+                    'title': 'VR Security',
+                    'content': 'Our VR Security training provides immersive cybersecurity education in virtual reality environments.',
+                    'keywords': 'vr, virtual reality, security, training, education',
+                    'priority': 90
+                },
+                {
+                    'title': 'Join Us',
+                    'content': 'To join Hardhat Enterprises, visit our careers page or contact us directly. We\'re always looking for talented individuals.',
+                    'keywords': 'join, careers, jobs, employment, opportunities',
+                    'priority': 80
+                },
+                {
+                    'title': 'Projects',
+                    'content': 'Our key projects include AppAttack, VR Security Training, Threat Mirror, and various cybersecurity research initiatives.',
+                    'keywords': 'projects, initiatives, research, security',
+                    'priority': 70
+                }
+            ]
+            
+            for entry in defaults:
+                self.create(**entry)
+            return True
+        return False
+
+
 class PageContent(models.Model):
-    """Stores content from various pages for the chatbot to search and retrieve"""
+    """Stores searchable content pages"""
     title = models.CharField(max_length=200)
-    page_path = models.CharField(max_length=255, help_text="Path to the page (e.g., /appattack/main)")
-    section = models.CharField(max_length=100, help_text="Section of the page (e.g., header, introduction, etc.)")
     content = models.TextField()
     keywords = models.TextField(help_text="Comma-separated keywords for search matching")
-    page_category = models.CharField(max_length=100, help_text="Category of page (e.g., appattack, challenges, etc.)")
-    priority = models.IntegerField(default=0, help_text="Higher priority content will be shown first (0-10)")
-    last_updated = models.DateTimeField(auto_now=True)
-
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    priority = models.IntegerField(default=0, help_text="Higher priority items appear first in search results")
+    
+    objects = PageContentManager()
+    
     def __str__(self):
-        return f"{self.title} - {self.page_path}"
-
-    @classmethod
-    def create_default_entries(cls):
-        """Create default entries for the chatbot to use"""
-        # Project Overview with high priority
-        cls.objects.get_or_create(
-            title="Project Overview",
-            page_path="/pages/what_we_do",
-            section="overview",
-            content="""Hey there! Looking to dive into some exciting cybersecurity projects? We've got some amazing opportunities for you! Here's what we're working on:
-
-1. AppAttack - Perfect for those who love web security and want to learn about vulnerabilities
-2. DeakinThreatmirror - For the data visualization enthusiasts who want to see threats in action
-3. Smishing Detection - If you're interested in mobile security and machine learning
-4. Malware Visualization - For those who want to understand malware behavior in a visual way
-5. VR Security Training - Experience cybersecurity training in a whole new dimension
-6. PT GUI - A great starting point for aspiring penetration testers
-
-Each project has its own dedicated page with more details. You can join any project after signing up and logging in. Which one catches your interest?""",
-            keywords="projects, AppAttack, DeakinThreatmirror, Smishing, Malware, VR, PT GUI, cybersecurity, training",
-            page_category="projects",
-            priority=10
-        )
-
-        # Add any other default entries here if needed
-        pass
+        return self.title
+    
+    class Meta:
+        ordering = ['-priority', '-updated_at']
 
 
 class CustomChatbotResponse(models.Model):

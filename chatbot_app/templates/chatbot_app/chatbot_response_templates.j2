@@ -1,0 +1,246 @@
+{# chatbot_response_templates.j2 #}
+
+{# Announcements #}
+{% macro announcement(message, isActive, created_at) %}
+⸻
+
+📢 Announcements
+
+📢 [Announcement]
+📝 Message: {{ message }}
+✅ Active: {{ isActive }}
+📅 Posted On: {{ created_at }}
+{% endmacro %}
+
+{# Articles #}
+{% macro article(title, date, author, featured, likes, content) %}
+⸻
+
+📰 Articles
+
+📰 [{{ title }}]
+🗓️ Date: {{ date }} | ✍️ Author: {{ author }} | ⭐ Featured: {{ featured }}
+❤️ Likes: {{ likes }}
+📄 Content: {{ content }}
+{% endmacro %}
+
+{# Contact Submissions #}
+{% macro contact_submission(first_name, last_name, email, message, created_at) %}
+⸻
+
+📥 Contact Submissions
+
+📥 [Contact Submission]
+👤 Name: {{ first_name }} {{ last_name }}
+📧 Email: {{ email }}
+📝 Message: {{ message }}
+📅 Submitted: {{ created_at }}
+{% endmacro %}
+
+{# Contacts #}
+{% macro contact(name, email, message) %}
+⸻
+
+🧾 Contacts
+
+📇 [Contact Record]
+👤 Name: {{ name }}
+📧 Email: {{ email }}
+💬 Message: {{ message }}
+{% endmacro %}
+
+{# Courses #}
+{% macro course(title, code, is_postgraduate) %}
+⸻
+
+📚 Courses
+
+🎓 [Course: {{ title }}]
+🆔 Code: {{ code }}
+🎓 Postgraduate: {{ is_postgraduate }}
+{% endmacro %}
+
+{# Cyber Challenges #}
+{% macro cyber_challenge(title, category, points, difficulty, question, description, choices, correct_answer, explanation) %}
+⸻
+
+🧠 Cyber Challenges
+
+🧠 [Challenge: {{ title }}]
+📂 Category: {{ category }} | 🔥 Points: {{ points }} | 🟢 Difficulty: {{ difficulty }}
+📄 Description: {{ description }}
+{% endmacro %}
+
+{# DDT Contacts #}
+{% macro ddt_contact(fullname, email, mobile, message) %}
+⸻
+
+📞 DDT Contacts
+
+📞 [DDT Contact]
+👤 Full Name: {{ fullname }}
+📧 Email: {{ email }} | 📱 Mobile: {{ mobile }}
+📝 Message: {{ message }}
+{% endmacro %}
+
+{# Experiences #}
+{% macro experience(name, feedback, created_at) %}
+⸻
+
+💼 Experiences
+
+💼 [Experience Entry]
+👤 Name: {{ name }}
+📝 Feedback: {{ feedback }}
+📅 Date: {{ created_at }}
+{% endmacro %}
+
+{# Job Applications #}
+{% macro job_application(job, name, email, resume, cover_letter, applied_date) %}
+⸻
+
+📑 Job Applications
+
+📑 [Application for: {{ job }}]
+👤 Name: {{ name }} | 📧 Email: {{ email }}
+📎 Resume: {{ resume }} | 📄 Cover Letter: {{ cover_letter }}
+📅 Applied On: {{ applied_date }}
+{% endmacro %}
+
+{# Jobs #}
+{% macro job(title, location, posted_date, closing_date, job_type, description) %}
+⸻
+
+🧰 Jobs
+
+🧰 [Job Listing: {{ title }}]
+📍 Location: {{ location }} | 📅 Posted: {{ posted_date }} | ⏳ Closing: {{ closing_date }}
+🧾 Type: {{ job_type }}
+📄 Description: {{ description }}
+{% endmacro %}
+
+{# Leader Board #}
+{% macro leaderboard(category, user, total_points) %}
+⸻
+
+🏆 Leader Board
+
+🏆 [Leaderboard: {{ category }}]
+👤 User: {{ user }}
+🔥 Points: {{ total_points }}
+{% endmacro %}
+
+{# Progress #}
+{% macro progress(student, skill, progress, completed) %}
+⸻
+
+📊 Progress
+
+📊 [Progress]
+👨‍🎓 Student: {{ student }} | 📘 Skill: {{ skill }}
+📈 Progress: {{ progress }}% | ✅ Completed: {{ completed }}
+{% endmacro %}
+
+{# Projects #}
+{% macro project(title, id) %}
+⸻
+
+🛠️ Projects
+
+🛠️ [Project: {{ title }}]
+🆔 ID: {{ id }}
+{% endmacro %}
+
+{# Projects Join Us #}
+{% macro projects_join_us(name, email, message, page_name) %}
+⸻
+
+🧪 Projects Join Us
+
+🧪 [Join Project Request]
+👤 Name: {{ name }} | 📧 Email: {{ email }}
+💬 Message: {{ message }} | 🔗 Page: {{ page_name }}
+{% endmacro %}
+
+{# Security Events #}
+{% macro security_event(user, timestamp, ip_address, event_type, details) %}
+⸻
+
+🚨 Security Events
+
+🚨 [Security Event]
+👤 User: {{ user }}
+📅 Time: {{ timestamp }} | 📍 IP: {{ ip_address }}
+🔐 Type: {{ event_type }}
+📝 Details: {{ details }}
+{% endmacro %}
+
+{# Skills #}
+{% macro skill(name, description, slug) %}
+⸻
+
+🧠 Skills
+
+🧠 [Skill: {{ name }}]
+📄 Description: {{ description }} | 🔗 Slug: {{ slug }}
+{% endmacro %}
+
+{# Smishing Join Us #}
+{% macro smishing_join_us(name, email, message) %}
+⸻
+
+📱 Smishing Join Us
+
+📱 [Smishing Detection Request]
+👤 Name: {{ name }} | 📧 Email: {{ email }}
+💬 Message: {{ message }}
+{% endmacro %}
+
+{# Students #}
+{% macro student(id, user, course, year, trimester, unit, p1, p2, p3, skills) %}
+⸻
+
+🎓 Students
+
+🎓 [Student ID: {{ id }}]
+👤 User: {{ user }}
+📘 Course: {{ course }} | 📆 Year: {{ year }} | 📅 Trimester: {{ trimester }}
+📚 Units: {{ unit }}
+📈 Performance: P1={{ p1 }}, P2={{ p2 }}, P3={{ p3 }}
+🎯 Allocated Skills: {{ skills }}
+{% endmacro %}
+
+{# User Challenges #}
+{% macro user_challenge(user, challenge, completed, score) %}
+⸻
+
+🏁 User Challenges
+
+🏁 [User Challenge]
+👤 User: {{ user }} | 🎯 Challenge: {{ challenge }}
+✅ Completed: {{ completed }} | 🔥 Score: {{ score }}
+{% endmacro %}
+
+{# Users #}
+{% macro user(first_name, last_name, email, is_staff, is_verified, is_master, is_active, created_at, updated_at, last_activity) %}
+⸻
+
+👥 Users
+
+👥 [User: {{ first_name }} {{ last_name }}]
+📧 Email: {{ email }}
+🧾 Roles: Staff={{ is_staff }}, Verified={{ is_verified }}, Master={{ is_master }}
+✅ Active: {{ is_active }}
+📅 Created: {{ created_at }} | 🔄 Updated: {{ updated_at }}
+🕒 Last Seen: {{ last_activity }}
+{% endmacro %}
+
+{# Webpages #}
+{% macro webpage(title, url, id) %}
+⸻
+
+🌐 Webpages
+
+🌐 [Webpage: {{ title }}]
+🔗 URL: {{ url }} | 🆔 ID: {{ id }}
+{% endmacro %} 

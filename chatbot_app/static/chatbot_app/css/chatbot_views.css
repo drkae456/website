@@ -250,8 +250,14 @@ body.chat-page {
 }
 
 .bot-message {
+    background-color: #f0f0f0;
+    margin-right: 10%;
     align-self: flex-start;
-    background-color: #f1f0f0;
+    border-left: 2px solid #ffde03;
+    position: relative;
+    padding: 10px 15px;
+    font-size: 14px;
+    line-height: 1.5;
 }
 
 .input-container {
@@ -332,4 +338,288 @@ body.chat-page {
     30% {
         transform: translateY(-4px);
     }
+}
+
+/* Enhanced Search Results in Chat */
+.bot-message .formatted-response {
+    background-color: #ffffff;
+    border: none;
+    padding: 10px;
+    margin: 5px 0;
+    border-radius: 5px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.bot-message .search-results {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.bot-message .search-summary {
+    background-color: #f8f9fa;
+    padding: 8px;
+    border-radius: 5px;
+    margin-bottom: 10px;
+}
+
+.bot-message .search-summary h3 {
+    color: #1a1a1a;
+    font-size: 14px;
+    margin: 0 0 5px 0;
+}
+
+.bot-message .search-results-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 12px;
+    background-color: #ffffff;
+}
+
+.bot-message .search-results-table th,
+.bot-message .search-results-table td {
+    padding: 6px 8px;
+    border: 1px solid #e0e0e0;
+    text-align: left;
+}
+
+.bot-message .search-results-table th {
+    background-color: #f5f5f5;
+    font-weight: bold;
+}
+
+.bot-message .search-result {
+    background-color: #ffffff;
+    padding: 8px;
+    margin: 5px 0;
+    border-radius: 5px;
+    border-left: 2px solid #ffde03;
+}
+
+.bot-message .result-header {
+    font-weight: bold;
+    color: #1a1a1a;
+}
+
+.bot-message .result-description {
+    color: #666;
+    font-size: 12px;
+    margin: 5px 0;
+}
+
+.bot-message .result-details {
+    font-size: 12px;
+    color: #444;
+}
+
+.bot-message .difficulty-badge {
+    background-color: #ffde03;
+    color: #1a1a1a;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    margin-left: 5px;
+}
+
+.bot-message .result-separator {
+    border: none;
+    border-top: 1px solid #eee;
+    margin: 8px 0;
+}
+
+.bot-message .error-message {
+    background-color: #fff2f0;
+    border-left: 3px solid #ff4d4f;
+    padding: 8px;
+    margin: 5px 0;
+    color: #cf1322;
+}
+
+.bot-message .no-results {
+    background-color: #fff7e6;
+    border-left: 3px solid #ffa940;
+    padding: 8px;
+    margin: 5px 0;
+    color: #873800;
+}
+
+/* Ensure proper spacing in bot messages */
+.bot-message p {
+    margin: 5px 0;
+}
+
+.bot-message ul {
+    margin: 5px 0;
+    padding-left: 20px;
+}
+
+.bot-message li {
+    margin: 2px 0;
+}
+
+/* Mobile responsiveness for search results */
+@media (max-width: 768px) {
+    .bot-message .search-results-table {
+        font-size: 11px;
+    }
+    
+    .bot-message .search-results-table th,
+    .bot-message .search-results-table td {
+        padding: 4px 6px;
+    }
+    
+    .bot-message .search-summary h3 {
+        font-size: 13px;
+    }
+}
+
+/* Challenge formatting */
+.bot-message hr,
+.bot-message ⸻ {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 10px 0;
+}
+
+.bot-message .challenge-title {
+    font-size: 1.2em;
+    margin-right: 5px;
+    color: #1a1a1a;
+}
+
+.bot-message .difficulty-emoji {
+    font-size: 1.1em;
+    margin-right: 3px;
+}
+
+.bot-message .points-emoji {
+    color: #ff6b6b;
+    margin-right: 3px;
+}
+
+.bot-message .link-emoji {
+    color: #0366d6;
+    margin-right: 3px;
+}
+
+.bot-message .challenge-link {
+    color: #0366d6;
+    text-decoration: none;
+    font-weight: 500;
+    display: inline-block;
+    margin-top: 5px;
+}
+
+.bot-message .challenge-link:hover {
+    text-decoration: underline;
+}
+
+.bot-message .action {
+    color: #0366d6;
+    cursor: pointer;
+    margin-top: 5px;
+    display: block;
+}
+
+.bot-message .action:hover {
+    text-decoration: underline;
+}
+
+/* Bot prefix */
+.bot-prefix {
+    font-weight: bold;
+    color: #1a1a1a;
+    margin-right: 5px;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .bot-message {
+        background-color: #1a1a1a;
+        color: #f0f0f0;
+    }
+    
+    .bot-message .challenge-title {
+        color: #f0f0f0;
+    }
+    
+    .bot-message .bot-prefix {
+        color: #f0f0f0;
+    }
+    
+    .bot-message hr,
+    .bot-message ⸻ {
+        border-top-color: #333;
+    }
+    
+    .bot-message .challenge-link,
+    .bot-message .action {
+        color: #58a6ff;
+    }
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .bot-message {
+        font-size: 13px;
+        padding: 8px 12px;
+    }
+    
+    .bot-message .challenge-title {
+        font-size: 1.1em;
+    }
+}
+
+/* Challenge formatting */
+.challenge-greeting {
+    font-size: 1.1em;
+    margin-bottom: 15px;
+    color: #1a1a1a;
+}
+
+.challenge-title {
+    font-size: 1.1em;
+    margin: 10px 0 5px 0;
+    font-weight: bold;
+}
+
+.challenge-difficulty {
+    margin: 8px 0;
+    font-size: 0.95em;
+}
+
+.challenge-points {
+    margin: 8px 0;
+    font-size: 0.95em;
+    color: #e74c3c;
+}
+
+.challenge-link {
+    display: inline-block;
+    margin: 10px 0 15px 0;
+    padding: 8px 15px;
+    background-color: #3498db;
+    color: white !important;
+    border-radius: 5px;
+    text-decoration: none;
+}
+
+.challenge-prompt {
+    margin: 15px 0 5px 0;
+    color: #2c3e50;
+    font-style: italic;
+}
+
+.challenge-action {
+    color: #3498db;
+    cursor: pointer;
+    font-weight: 500;
+    margin-bottom: 15px;
+}
+
+.challenge-separator {
+    border: 0;
+    height: 1px;
+    background: #ecf0f1;
+    margin: 20px 0;
 } 

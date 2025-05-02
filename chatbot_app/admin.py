@@ -55,9 +55,9 @@ class ProductServiceAdmin(admin.ModelAdmin):
 
 @admin.register(PageContent)
 class PageContentAdmin(admin.ModelAdmin):
-    list_display = ('title', 'page_path', 'section', 'page_category', 'priority', 'last_updated')
-    list_filter = ('page_category', 'priority')
-    search_fields = ('title', 'content', 'keywords', 'page_path')
+    list_display = ('title', 'priority', 'created_at', 'updated_at')
+    list_filter = ('priority',)
+    search_fields = ('title', 'content', 'keywords')
     list_editable = ('priority',)
 
 @admin.register(ChatSession)
@@ -70,10 +70,15 @@ class ChatSessionAdmin(admin.ModelAdmin):
 @admin.register(ChatMessage)
 class ChatMessageAdmin(admin.ModelAdmin):
     list_display = ('session', 'is_bot', 'message_preview', 'timestamp')
-    list_filter = ('is_bot', 'timestamp')
+    list_filter = ('sender', 'timestamp')
     search_fields = ('message', 'session__session_id')
     readonly_fields = ('timestamp',)
-    
+
+    def is_bot(self, obj):
+        return obj.sender == 'bot'
+    is_bot.boolean = True
+    is_bot.short_description = "Is Bot"
+
     def message_preview(self, obj):
         return obj.message[:50] + "..." if len(obj.message) > 50 else obj.message
     message_preview.short_description = "Message" 

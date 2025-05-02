@@ -17,4 +17,8 @@ logging.basicConfig(
 
 # Create a logger for test results
 test_logger = logging.getLogger('chatbot_tests')
-test_logger.setLevel(logging.INFO) 
+test_logger.setLevel(logging.INFO)
+
+"""
+Test suite for the chatbot application.
+""" 

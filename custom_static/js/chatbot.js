@@ -7,8 +7,41 @@ let sessionId;
 let connectionStatus;
 let isResizing = false;
 
-// Update the chatbot server URL to use separate port
-const CHATBOT_SERVER_URL = 'http://127.0.0.1:8000/chatbot';
+// Default chatbot server URL - will be updated from config API
+let CHATBOT_SERVER_URL = 'http://127.0.0.1:8000/chatbot';
+let chatbotConfig = null;
+
+// Function to load configuration from the API
+async function loadChatbotConfig() {
+    try {
+        const response = await fetch(`${CHATBOT_SERVER_URL}/api/config/`, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            chatbotConfig = await response.json();
+            console.log("Loaded chatbot configuration:", chatbotConfig);
+            
+            // Update the server URL from config
+            if (chatbotConfig.server_url) {
+                CHATBOT_SERVER_URL = chatbotConfig.server_url;
+                console.log("Updated chatbot server URL:", CHATBOT_SERVER_URL);
+            }
+            
+            return chatbotConfig;
+        } else {
+            console.error("Error loading chatbot config:", response.status, response.statusText);
+            return null;
+        }
+    } catch (error) {
+        console.error("Error loading chatbot config:", error);
+        return null;
+    }
+}
 
 // Function to ensure chat scrolls to bottom
 function scrollChatToBottom() {
@@ -236,31 +269,89 @@ async function sendMessage(directMessage = null) {
         const userInfo = await getUserInfo();
         currentUser = userInfo;
         
-        const userMessage = {
-            sender: 'user',
-            text: messageText,
-            timestamp: Date.now()
-        };
-        addMessage(userMessage);
-        
+        // Clear input before sending
         if (!directMessage && messageInput) {
             messageInput.value = '';
         }
         
-        addTypingIndicator();
-        
-        let curSessionId = sessionId || localStorage.getItem('chatSessionId');
-        
-        if (!curSessionId) {
-            const newSessionId = await createNewSession();
-            if (newSessionId) {
-                curSessionId = newSessionId;
-                await sendMessageToServer(messageText, curSessionId);
-            } else {
-                handleSendError("Could not create a chat session");
+        try {
+            // Ensure we have a valid session
+            if (!sessionId) {
+                await checkChatbotConnection();
+                if (!sessionId) {
+                    throw new Error("Could not establish chat session");
+                }
             }
-        } else {
-            await sendMessageToServer(messageText, curSessionId);
+            
+            // Add user message to chat
+            const userMessage = {
+                sender: 'user',
+                text: messageText,
+                timestamp: Date.now()
+            };
+            addMessage(userMessage);
+            addTypingIndicator();
+            
+            // Send message
+            const messageResponse = await fetch(`${CHATBOT_SERVER_URL}/api/session/${sessionId}/message/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                mode: 'cors',
+                credentials: 'include',
+                body: JSON.stringify({
+                    message: messageText,
+                    user_info: {
+                        is_authenticated: userInfo.isLoggedIn,
+                        user_id: userInfo.id,
+                        username: userInfo.name,
+                        email: userInfo.email,
+                        auth_token: userInfo.authToken,
+                        auth_timestamp: userInfo.authTimestamp
+                    }
+                })
+            });
+            
+            if (!messageResponse.ok) {
+                if (messageResponse.status === 404) {
+                    // Session is invalid, clear it and try to create a new one
+                    sessionId = null;
+                    localStorage.removeItem('chatSessionId');
+                    await checkChatbotConnection();
+                    if (sessionId) {
+                        // Retry sending the message with new session
+                        return await sendMessage(messageText);
+                    }
+                }
+                throw new Error(`Failed to send message: ${messageResponse.status}`);
+            }
+            
+            const messageData = await messageResponse.json();
+            removeTypingIndicator();
+            
+            const botResponse = {
+                sender: 'bot',
+                text: messageData.response || "Sorry, I couldn't process that.",
+                timestamp: Date.now()
+            };
+            addMessage(botResponse);
+            
+        } catch (error) {
+            console.error('Error in message flow:', error);
+            removeTypingIndicator();
+            
+            // Show error message to user
+            const errorMessage = {
+                sender: 'bot',
+                text: "Sorry, I'm having trouble connecting. Please try again later.",
+                timestamp: Date.now()
+            };
+            addMessage(errorMessage);
+            
+            // Try to re-establish connection
+            await checkChatbotConnection();
         }
     }
 }
@@ -302,7 +393,7 @@ async function sendMessageToServer(messageText, curSessionId) {
         // Get CSRF token from cookie
         const csrfToken = getCookie('csrftoken');
         
-        const response = await fetch(`${CHATBOT_SERVER_URL}/chat/`, {
+        const response = await fetch(`${CHATBOT_SERVER_URL}/api/session/${curSessionId}/message/`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -315,7 +406,6 @@ async function sendMessageToServer(messageText, curSessionId) {
             credentials: 'include',
             body: JSON.stringify({
                 message: messageText,
-                session_id: curSessionId,
                 user_info: {
                     is_authenticated: userInfo.isLoggedIn,
                     user_id: userInfo.id,
@@ -422,6 +512,7 @@ async function checkChatbotConnection() {
     connectionStatus.classList.add('connecting');
     
     try {
+        // First verify connection
         const response = await fetch(`${CHATBOT_SERVER_URL}/api/verify/`, {
             method: 'GET',
             credentials: 'include',
@@ -438,25 +529,67 @@ async function checkChatbotConnection() {
         
         const data = await response.json();
         
-        if (data.status === 'success') {
-            connectionStatus.textContent = "You have been connected to Hardhat Assistant";
+        if (data.status === 'success' || data.status === 'partial') {
+            // Get stored session ID if any
+            let storedSessionId = localStorage.getItem('chatSessionId');
+            
+            if (storedSessionId) {
+                // Validate the stored session
+                try {
+                    const sessionResponse = await fetch(`${CHATBOT_SERVER_URL}/api/session/${storedSessionId}/`, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json'
+                        },
+                        credentials: 'include'
+                    });
+                    
+                    if (!sessionResponse.ok) {
+                        // Session invalid, remove it
+                        localStorage.removeItem('chatSessionId');
+                        storedSessionId = null;
+                    }
+                } catch (error) {
+                    console.error("Error validating stored session:", error);
+                    localStorage.removeItem('chatSessionId');
+                    storedSessionId = null;
+                }
+            }
+            
+            if (!storedSessionId) {
+                // Create new session if no valid stored session
+                try {
+                    const sessionResponse = await fetch(`${CHATBOT_SERVER_URL}/api/session/create/`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        mode: 'cors',
+                        credentials: 'include'
+                    });
+                    
+                    if (!sessionResponse.ok) {
+                        throw new Error(`Failed to create session: ${sessionResponse.status}`);
+                    }
+                    
+                    const sessionData = await sessionResponse.json();
+                    sessionId = sessionData.session_id;
+                    localStorage.setItem('chatSessionId', sessionId);
+                } catch (error) {
+                    console.error("Error creating new session:", error);
+                    throw error;
+                }
+            } else {
+                sessionId = storedSessionId;
+            }
+            
+            connectionStatus.textContent = "Connected to Hardhat Assistant";
             connectionStatus.classList.remove('connecting');
             connectionStatus.classList.add('connected');
             
-            if (!localStorage.getItem('chatSessionId')) {
-                await createNewSession();
-            }
-            
-            return true;
-        } else if (data.status === 'partial') {
-            connectionStatus.textContent = "Connected with limited functionality. Some features may not work.";
-            connectionStatus.classList.remove('connecting');
-            connectionStatus.classList.add('connected');
-            console.warn("Chatbot connected with partial functionality:", data.message, data.diagnostics);
-            
-            if (!localStorage.getItem('chatSessionId')) {
-                await createNewSession();
-            }
+            // Initialize chat after successful connection and session creation
+            await initializeChat();
             
             return true;
         } else {
@@ -477,7 +610,7 @@ async function checkChatbotConnection() {
 
 async function createNewSession() {
     try {
-        const response = await fetch(`${CHATBOT_SERVER_URL}/api/sessions/`, {
+        const response = await fetch(`${CHATBOT_SERVER_URL}/api/session/create/`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -492,6 +625,9 @@ async function createNewSession() {
             sessionId = data.session_id;
             localStorage.setItem('chatSessionId', sessionId);
             console.log("Created new chat session:", sessionId);
+            
+            // Initialize the chat after session is created
+            initializeChat();
             return sessionId;
         } else {
             console.error("Failed to create new session:", response.status, response.statusText);
@@ -499,6 +635,9 @@ async function createNewSession() {
         }
     } catch (error) {
         console.error("Error creating new chat session:", error);
+        connectionStatus.textContent = "Error connecting to Hardhat Assistant. Please try again.";
+        connectionStatus.classList.remove('connecting');
+        connectionStatus.classList.add('disconnected');
         return null;
     }
 }
@@ -861,9 +1000,9 @@ function resetChatPosition() {
     }
 }
 
-// Initialize when DOM is loaded
-document.addEventListener("DOMContentLoaded", function() {
-    // Get DOM elements - fix selector accuracy
+// Function that gets called when document is fully loaded to initialize the chat
+document.addEventListener("DOMContentLoaded", async function() {
+    // Get DOM elements
     const chatPopup = document.getElementById("chat-popup");
     const chatOpenButton = document.getElementById("chatOpenButton");
     const chatCloseButton = document.getElementById("chatCloseButton");
@@ -872,23 +1011,15 @@ document.addEventListener("DOMContentLoaded", function() {
     connectionStatus = document.getElementById("connection-status");
     const sendButton = document.getElementById("send-button");
     
-    // Debug - log elements to console
-    console.log("Chat elements:", {
-        chatPopup: chatPopup,
-        chatOpenButton: chatOpenButton,
-        chatCloseButton: chatCloseButton,
-        messageInput: messageInput,
-        chatBox: chatBox
-    });
-    
     // Initialize resize functionality
     initResizableChatbox();
     
-    // Clear chat history on page refresh
+    // Clear chat history and session on page refresh
     localStorage.removeItem('chatHistory');
+    localStorage.removeItem('chatSessionId');
+    sessionId = null;
     
-    // Reset position if not previously set by user
-    // This ensures fresh sessions always start with the chatbot at the button position
+    // Reset position
     if (!localStorage.getItem('chatbot-user-positioned')) {
         localStorage.removeItem('chatbot-top');
         localStorage.setItem('chatbot-bottom', '20px');
@@ -896,14 +1027,10 @@ document.addEventListener("DOMContentLoaded", function() {
         localStorage.removeItem('chatbot-left');
     }
     
-    // Ensure chat popup is always hidden on page load
+    // Ensure chat popup is hidden on load
     hideChat();
     
-    // Generate new session ID
-    sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    localStorage.setItem('chatSessionId', sessionId);
-
-    // Set up event listeners for chat open button
+    // Set up chat open button listener
     if (chatOpenButton) {
         chatOpenButton.addEventListener("click", async function(e) {
             e.preventDefault();
@@ -915,37 +1042,22 @@ document.addEventListener("DOMContentLoaded", function() {
                     showChat();
                     if (messageInput) messageInput.focus();
                     
-                    if (connectionStatus) {
-                        connectionStatus.textContent = "Connecting to Hardhat Assistant...";
-                        connectionStatus.classList.remove('connected', 'disconnected');
-                        connectionStatus.classList.add('connecting');
-                        
-                        await checkChatbotConnection();
-                    }
-                    
-                    // Check for specific messages after opening chat
-                    setTimeout(() => {
-                        scrollToSixthMessage();
-                    }, 300);
+                    // Check connection and create session
+                    await checkChatbotConnection();
                 } else {
-                    // Close chat
                     hideChat();
                 }
             }
         });
     }
 
-    // Set up event listeners for chat close button
+    // Set up close button
     if (chatCloseButton) {
         chatCloseButton.addEventListener("click", function(e) {
             e.preventDefault();
-            console.log("Chat close button clicked");
             hideChat();
         });
     }
-
-    // Initialize chat
-    initializeChat();
 
     // Set up send button
     if (sendButton) {
@@ -961,39 +1073,34 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
     
-    // Setup a scroll check that monitors any changes to the chat box
+    // Setup scroll observer
     if (chatBox) {
-        // Create a mutation observer to watch for changes in the chat box
         const chatObserver = new MutationObserver(function(mutations) {
-            // When changes are detected, check if we need to scroll to specific messages
             scrollToSixthMessage();
         });
         
-        // Start observing the chat box for changes
         chatObserver.observe(chatBox, { 
-            childList: true,      // Watch for changes to the direct children
-            subtree: true,        // Watch for changes to all descendants
-            characterData: true   // Watch for changes to text content
+            childList: true,
+            subtree: true,
+            characterData: true
         });
     }
     
-    // Add a slight delay to ensure initialization is complete before hiding
+    // Hide chat with delay
     setTimeout(hideChat, 100);
     
-    // If user navigates away and comes back, ensure chat is still hidden
+    // Handle page show
     window.addEventListener('pageshow', function() {
         hideChat();
     });
 
-    // Initialize chat popup position at bottom right
+    // Initialize chat position
     if (chatPopup) {
-        // Always position at bottom right regardless of saved position
         chatPopup.style.right = "20px";
         chatPopup.style.bottom = "20px";
         chatPopup.style.left = "auto";
         chatPopup.style.top = "auto";
         
-        // Restore only size from localStorage
         if (localStorage.getItem('chatbot-width')) {
             chatPopup.style.width = localStorage.getItem('chatbot-width');
         }

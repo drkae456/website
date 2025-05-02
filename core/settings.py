@@ -183,31 +183,23 @@ WSGI_APPLICATION = "core.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.1/ref/settings/#databases
 
-DB_ENGINE   = os.getenv('DB_ENGINE'   , None)
-DB_USERNAME = os.getenv('DB_USERNAME' , None)
-DB_PASS     = os.getenv('DB_PASS'     , None)
-DB_HOST     = os.getenv('DB_HOST'     , None)
-DB_PORT     = os.getenv('DB_PORT'     , None)
-DB_NAME     = os.getenv('DB_NAME'     , None)
+DB_ENGINE   = os.getenv('DB_ENGINE', 'postgresql')
+DB_USERNAME = os.getenv('DB_USERNAME', 'postgres')
+DB_PASS     = os.getenv('DB_PASS', '')
+DB_HOST     = os.getenv('DB_HOST', 'localhost')
+DB_PORT     = os.getenv('DB_PORT', '5432')
+DB_NAME     = os.getenv('DB_NAME', 'hardhat_db')
 
-if DB_ENGINE and DB_NAME and DB_USERNAME:
-    DATABASES = { 
-      'default': {
+DATABASES = { 
+    'default': {
         'ENGINE'  : 'django.db.backends.' + DB_ENGINE, 
         'NAME'    : DB_NAME,
         'USER'    : DB_USERNAME,
         'PASSWORD': DB_PASS,
         'HOST'    : DB_HOST,
         'PORT'    : DB_PORT,
-        }, 
-    }
-else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
+    }, 
+}
 
 AUTH_USER_MODEL = "home.User"
 
@@ -415,14 +407,37 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 ]
 
 # Content Security Policy settings
-CSP_DEFAULT_SRC = ("'self'",)
+CSP_DEFAULT_SRC = ("'self'", "http://127.0.0.1:5005")
 CSP_CONNECT_SRC = (
     "'self'",
     "http://localhost:8000",
     "http://127.0.0.1:8000",
+    "http://127.0.0.1:5005",
 )
-CSP_SCRIPT_SRC = ("'self'", "'unsafe-inline'", "'unsafe-eval'")
-CSP_STYLE_SRC = ("'self'", "'unsafe-inline'")
-CSP_IMG_SRC = ("'self'", "data:", "https:")
+CSP_SCRIPT_SRC = (
+    "'self'", 
+    "'unsafe-inline'", 
+    "'unsafe-eval'",
+    "https://cdn.jsdelivr.net",
+    "https://code.jquery.com",
+    "https://buttons.github.io",
+    "https://unpkg.com",
+    "https://stackpath.bootstrapcdn.com",
+    "https://www.google.com",
+    "https://www.gstatic.com",
+)
+CSP_STYLE_SRC = (
+    "'self'", 
+    "'unsafe-inline'",
+    "https://fonts.googleapis.com",
+    "https://cdn.jsdelivr.net",
+)
+CSP_FONT_SRC = (
+    "'self'",
+    "https://fonts.gstatic.com",
+    "https://cdn.jsdelivr.net",
+)
+CSP_IMG_SRC = ("'self'", "data:")
+CSP_FRAME_SRC = ("'self'", "https://www.google.com")
 
 

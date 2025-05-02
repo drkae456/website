@@ -24,10 +24,46 @@
 <script>
   // Add initial message and suggestions
   function initializeChat() {
-    addMessage("Hello! Welcome to Hardhat Enterprises. My name is Hardie Hat I am here to help you explore the world of Hardhat Enterprises.");
+    const welcomeMessage = {
+        sender: 'bot',
+        text: "Hello! Welcome to Hardhat Enterprises. My name is Hardie Hat I am here to help you explore the world of Hardhat Enterprises.",
+        timestamp: Date.now()
+    };
+    addMessage(welcomeMessage);
     addSuggestedQuestions();
   }
 
-  // Initialize chat when loaded
-  initializeChat();
+  // Let the main script handle initialization
+  // Don't call initializeChat here - it's called from the main script
+
+  document.addEventListener('DOMContentLoaded', function() {
+    // Force formatted responses to render as HTML
+    const chatBox = document.getElementById('chat-box');
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            Array.from(mutation.addedNodes).forEach(function(node) {
+                if (node.classList && node.classList.contains('bot-message')) {
+                    // Convert to structured format
+                    const content = node.innerHTML
+                        .replace(/(👋.*?)\n/g, '<div class="challenge-greeting">$1</div>')
+                        .replace(/⸻/g, '<hr class="challenge-separator">')
+                        .replace(/📘 (.*?)\n/g, '<div class="challenge-title">📘 $1</div>')
+                        .replace(/(🟩|🟨|🟥) Difficulty: (.*?)\n/g, '<div class="challenge-difficulty">$1 Difficulty: $2</div>')
+                        .replace(/🔥 (.*?)\n/g, '<div class="challenge-points">🔥 $1</div>')
+                        .replace(/🔗 (.*?)(\n|$)/g, '<a href="$1" class="challenge-link">🔗 Take Challenge</a>')
+                        .replace(/💬 (.*?)\n/g, '<div class="challenge-prompt">$1</div>')
+                        .replace(/👉 (.*?)(\n|$)/g, '<div class="challenge-action">$1</div>')
+                        .replace(/\n/g, '<br>');
+                    
+                    node.innerHTML = content;
+                }
+            });
+        });
+    });
+    
+    observer.observe(chatBox, {
+        childList: true,
+        subtree: true
+    });
+  });
 </script> 

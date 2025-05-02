@@ -662,4 +662,311 @@
     background-color: #f0f0f0;
     border-left: 3px solid #ffde03;
   }
+}
+
+/* Search Results Styling */
+.formatted-response {
+    padding: 8px;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    margin: 5px 0;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.search-results {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.search-summary {
+    margin-bottom: 10px;
+    padding: 5px;
+    background-color: #fff;
+    border-radius: 4px;
+}
+
+.search-summary h3 {
+    font-size: 14px;
+    color: #1a1a1a;
+    margin: 0 0 5px 0;
+}
+
+.search-summary p {
+    margin: 3px 0;
+    font-size: 12px;
+}
+
+.result-types {
+    margin-top: 5px;
+}
+
+.result-types h4 {
+    font-size: 12px;
+    margin: 5px 0;
+}
+
+.result-types ul {
+    list-style: none;
+    padding-left: 10px;
+    margin: 0;
+}
+
+.result-types li {
+    font-size: 11px;
+    color: #666;
+}
+
+.search-results-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 11px;
+}
+
+.search-results-table th,
+.search-results-table td {
+    padding: 4px 6px;
+    text-align: left;
+    border: 1px solid #ddd;
+}
+
+.search-results-table th {
+    background-color: #f0f0f0;
+    font-weight: bold;
+}
+
+.search-results-table tr:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+.search-result {
+    margin: 8px 0;
+    padding: 5px;
+    background-color: #fff;
+    border-radius: 4px;
+    border-left: 2px solid #ffde03;
+}
+
+.result-header {
+    font-weight: bold;
+    margin-bottom: 3px;
+}
+
+.result-description {
+    font-size: 11px;
+    color: #666;
+    margin: 3px 0;
+}
+
+.result-details {
+    font-size: 11px;
+}
+
+.result-details ul {
+    list-style: none;
+    padding-left: 10px;
+    margin: 3px 0;
+}
+
+.difficulty-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background-color: #ffde03;
+    color: #1a1a1a;
+    font-size: 10px;
+    margin-left: 5px;
+}
+
+.result-separator {
+    border: 0;
+    border-top: 1px solid #eee;
+    margin: 8px 0;
+}
+
+.result-title {
+    color: #1a1a1a;
+    text-decoration: none;
+}
+
+.result-title:hover {
+    color: #ffde03;
+}
+
+.error-message {
+    color: #721c24;
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    padding: 8px;
+    border-radius: 4px;
+    margin: 5px 0;
+}
+
+.no-results {
+    color: #856404;
+    background-color: #fff3cd;
+    border: 1px solid #ffeeba;
+    padding: 8px;
+    border-radius: 4px;
+    margin: 5px 0;
+}
+
+/* Mobile responsive styles for search results */
+@media (max-width: 768px) {
+    .search-results-table {
+        font-size: 10px;
+    }
+    
+    .search-results-table th,
+    .search-results-table td {
+        padding: 3px 4px;
+    }
+    
+    .search-summary h3 {
+        font-size: 13px;
+    }
+    
+    .result-description {
+        font-size: 10px;
+    }
+}
+
+/* Separator line */
+.formatted-response hr,
+.formatted-response ⸻ {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 10px 0;
+}
+
+/* Challenge title */
+.formatted-response h3,
+.formatted-response 📘 {
+    font-size: 16px;
+    font-weight: bold;
+    color: #1a1a1a;
+    margin: 10px 0 5px 0;
+}
+
+/* Challenge description */
+.formatted-response p {
+    margin: 5px 0;
+    color: #333;
+}
+
+/* Difficulty badges */
+.formatted-response .difficulty {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    margin: 5px 0;
+}
+
+/* Points display */
+.formatted-response .points {
+    display: inline-block;
+    color: #ff6b6b;
+    font-weight: bold;
+    margin: 5px 0;
+}
+
+/* Challenge link */
+.formatted-response a {
+    display: inline-block;
+    color: #0366d6;
+    text-decoration: none;
+    margin: 5px 0;
+    font-weight: 500;
+}
+
+.formatted-response a:hover {
+    text-decoration: underline;
+}
+
+/* Prompt for more */
+.formatted-response .prompt {
+    margin-top: 15px;
+    color: #666;
+    font-style: italic;
+}
+
+/* Action suggestion */
+.formatted-response .action {
+    color: #0366d6;
+    cursor: pointer;
+    margin-top: 5px;
+}
+
+.formatted-response .action:hover {
+    text-decoration: underline;
+}
+
+/* Emoji styling */
+.formatted-response .emoji {
+    font-size: 1.2em;
+    margin-right: 5px;
+}
+
+/* Course-specific styles */
+.formatted-response .course-info {
+    display: flex;
+    gap: 15px;
+    margin: 5px 0;
+    color: #666;
+}
+
+/* Job-specific styles */
+.formatted-response .job-info {
+    display: flex;
+    gap: 15px;
+    margin: 5px 0;
+    color: #666;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .formatted-response {
+        font-size: 13px;
+    }
+    
+    .formatted-response h3,
+    .formatted-response 📘 {
+        font-size: 15px;
+    }
+    
+    .formatted-response .difficulty {
+        font-size: 11px;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .formatted-response {
+        background-color: #1a1a1a;
+        color: #f0f0f0;
+    }
+    
+    .formatted-response h3,
+    .formatted-response 📘 {
+        color: #f0f0f0;
+    }
+    
+    .formatted-response p {
+        color: #d0d0d0;
+    }
+    
+    .formatted-response a {
+        color: #58a6ff;
+    }
+    
+    .formatted-response .prompt {
+        color: #999;
+    }
+    
+    .formatted-response hr,
+    .formatted-response ⸻ {
+        border-top-color: #333;
+    }
 } 

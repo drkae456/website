@@ -36,11 +36,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
 document.addEventListener("DOMContentLoaded", () => {
     const sidebarHeader = document.querySelector(".recently-viewed-sidebar h5");
-    const arrowIcon = sidebarHeader.querySelector(".arrow-icon");
-
-    if (sidebarHeader && arrowIcon) {
-        sidebarHeader.addEventListener("click", () => {
-            arrowIcon.classList.toggle("rotate");
-        });
+    if (sidebarHeader) {
+        const arrowIcon = sidebarHeader.querySelector(".arrow-icon");
+        if (arrowIcon) {
+            sidebarHeader.addEventListener("click", () => {
+                arrowIcon.classList.toggle("rotate");
+            });
+        }
     }
 });

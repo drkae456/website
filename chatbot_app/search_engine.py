@@ -1,597 +1,478 @@
-# File created by Bryce Bacon in association with Hardhat Enterprises Company Website Backend team
-# StudentID: 215076784 | Contact: brycedanielbacon@gmail.com | GitHub: https://github.com/drkae456
-# Alot of manual inpuit, next job is to automate more, with better sorting and natural language algorithm
-"""
-chatbot_app/search_engine.py
-ORM-based search implementation with dynamic model handling and security.
-Enhanced with natural language processing and smart model identification.
-"""
 import re
 from difflib import get_close_matches
 import logging
-
+from typing import Dict, Any, Optional, List, Tuple
 from django.apps import apps
-from django.db.models import Q
-from django.db.models import CharField, TextField
+from django.db.models import Q, Model, Field
+from django.db.models.fields import CharField, TextField, DateTimeField, BooleanField, IntegerField
+from textblob import TextBlob
+from .textblob_analyzer import correct_spelling, extract_noun_phrases
+from .result_formatter import format_search_results_rich, format_as_markdown, format_for_chat
 from django.utils import timezone
+from jinja2 import Environment, FileSystemLoader
 
-# Set up logging
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-# Define substrings of field names considered sensitive
-SENSITIVE_FIELD_KEYWORDS = {'password', 'passkey', 'secret', 'token', 'email', 'user_details'}
-
-# Common domain-specific terms for spell checking
-DOMAIN_TERMS = {
-    'cyber', 'cybersecurity', 'security', 'hacking', 'ethical', 'penetration',
-    'pentest', 'malware', 'virus', 'trojan', 'ransomware', 'phishing', 'smishing',
-    'firewall', 'network', 'encryption', 'decryption', 'authentication', 'authorization',
-    'vulnerability', 'exploit', 'attack', 'defense', 'threat', 'risk', 'assessment',
-    'audit', 'compliance', 'forensics', 'incident', 'response', 'mitigation',
-    'deakin', 'hardhat', 'challenge', 'ctf', 'flag', 'course', 'skill', 'project',
-    'appattack', 'threatmirror', 'visualization'
-}
-
-# Mapping for formatting title and URL by model
-MODEL_FORMAT = {
-    'cyberchallenge': {'emoji': '🎯', 'label': 'Challenge', 'url_pattern': '/challenges/{id}', 'append_difficulty': True},
-    'skill':         {'emoji': '💪', 'label': 'Skill', 'url_pattern': '/skills/{id}'},
-    'course':        {'emoji': '📚', 'label': 'Course', 'url_pattern': '/courses/{id}'},
-    'project':       {'emoji': '🚀', 'label': 'Project', 'url_pattern': '/projects/{id}'},
-    'announcement':  {'emoji': '📢', 'label': 'Announcement', 'url_pattern': '/announcements/{id}'},
-}
-
-def build_vocabulary():
-    """
-    Build a vocabulary from domain terms and database content.
-    """
-    vocab = set(DOMAIN_TERMS)
-    
-    # Add model names and their fields
-    models = get_searchable_models()
-    for model in models.values():
-        # Add model name and its variations
-        name = model.__name__.lower()
-        vocab.add(name)
-        vocab.add(name + 's')  # plural form
-        words = split_camel(model.__name__)
-        vocab.update(words)
-        
-        # Add field names
-        fields = get_searchable_fields(model)
-        vocab.update(field.lower() for field in fields)
-        
-    return vocab
-
-def spell_correct(text, cutoff=0.8):
-    """
-    Attempt to correct spelling in the input text using domain-specific vocabulary.
-    
-    Args:
-        text (str): Input text to correct
-        cutoff (float): Similarity threshold for corrections (0.0 to 1.0)
-        
-    Returns:
-        tuple: (corrected_text, was_corrected)
-    """
-    if not text:
-        return text, False
-        
-    # Get or build vocabulary
-    vocab = build_vocabulary()
-    
-    # Split into words and normalize
-    words = text.lower().split()
-    corrected = []
-    was_corrected = False
-    
-    for word in words:
-        # Skip short words and numbers
-        if len(word) <= 3 or word.isdigit():
-            corrected.append(word)
-            continue
-            
-        # Skip if word is already in vocabulary
-        if word in vocab:
-            corrected.append(word)
-            continue
-            
-        # Try to find close matches
-        matches = get_close_matches(word, vocab, n=1, cutoff=cutoff)
-        if matches:
-            corrected.append(matches[0])
-            was_corrected = True
-        else:
-            corrected.append(word)
-            
-    return ' '.join(corrected), was_corrected
-
-def get_searchable_models(app_label='home'):
-    """
-    Dynamically retrieve all models from the specified app.
-    Returns a dict mapping cleaned model keys to model classes.
-    """
-    app_config = apps.get_app_config(app_label)
-    models = {}
-    for model in app_config.get_models():
-        key = model.__name__.lower()
-        models[key] = model
-    return models
 
 
-def get_searchable_fields(model):
+def initialize_search_engine() -> Dict[str, Any]:
     """
-    Return a list of CharField/TextField names on the model,
-    excluding any whose names contain sensitive keywords.
+    Build a mapping of keyword to model for dynamic searching.
+    Prioritizes models from the home app.
     """
-    fields = []
-    for field in model._meta.get_fields():
-        if getattr(field, 'concrete', False) and not field.many_to_many and not field.one_to_many:
-            if isinstance(field, (CharField, TextField)):
-                name = field.name.lower()
-                if not any(keyword in name for keyword in SENSITIVE_FIELD_KEYWORDS):
-                    fields.append(field.name)
-    return fields
-
-
-def split_camel(name):
-    """
-    Split CamelCase model names into space-separated words.
-    """
-    parts = re.findall(r'[A-Z][a-z]*', name)
-    return [p.lower() for p in parts]
-
-
-def identify_model_from_prompt(prompt, models):
-    """
-    Identify the best model key in the prompt by matching full words or fuzzy matching.
-    Now handles partial matches and common variations of model names as well as
-    natural language questions.
-    """
-    prompt_lower = prompt.lower()
-    normalized = re.sub(r"\W+", '', prompt_lower)
+    model_mapping: Dict[str, Any] = {}
     
-    # Expanded variations of model names with more natural language patterns
-    model_variations = {
-        # Challenge variations
-        'challenge': 'cyberchallenge',
-        'challenges': 'cyberchallenge',
-        'cyberchallenges': 'cyberchallenge',
-        'cyber': 'cyberchallenge', 
-        
-        # Announcement variations
-        'announcement': 'announcement',
-        'announcements': 'announcement',
-        'news': 'announcement',
-        'updates': 'announcement',
-        
-        # Skill variations
-        'skill': 'skill',
-        'skills': 'skill',
-        'learn': 'skill',
-        'learning': 'skill',
-        'training': 'skill',
-        'ability': 'skill',
-        'abilities': 'skill',
-        'competency': 'skill',
-        'competencies': 'skill',
-        
-        # Course variations
-        'course': 'course',
-        'courses': 'course',
-        'class': 'course',
-        'classes': 'course',
-        'training': 'course',
-        
-        # Project variations
-        'project': 'project',
-        'projects': 'project',
-        'assignment': 'project',
-        'assignments': 'project'
-    }
-    
-    # Check for question patterns first
-    question_patterns = {
-        r'what skill': 'skill',
-        r'which skill': 'skill',
-        r'can i learn': 'skill',
-        r'how (can|do) i learn': 'skill',
-        r'what.+learn': 'skill',
-        r'skills.+(can|available)': 'skill',
-        r'available skills': 'skill',
-        r'what courses': 'course',
-        r'which courses': 'course',
-        r'any new challenge': 'cyberchallenge',
-        r'what challenge': 'cyberchallenge',
-    }
-    
-    # First check for question patterns
-    for pattern, model_key in question_patterns.items():
-        if re.search(pattern, prompt_lower):
-            return model_key
-    
-    # Then try exact matches from variations
-    words = prompt_lower.split()
-    for word in words:
-        if word in model_variations:
-            return model_variations[word]
-    
-    # Try direct substring match of model names
-    for key, model in models.items():
-        # Build phrase variants from CamelCase name
-        words = split_camel(model.__name__)
-        phrase = ' '.join(words)
-        plural = phrase + 's'
-        # Check phrase or plural in prompt, or key in normalized prompt
-        if phrase in prompt_lower or plural in prompt_lower or key in normalized:
-            return key
-    
-    # Fallback: fuzzy match against model variations
-    best_match = None
-    best_score = 0
-    
-    # Try to match against all words in the query
-    for word in prompt_lower.split():
-        matches = get_close_matches(word, list(model_variations.keys()), n=1, cutoff=0.6)
-        if matches:
-            score = len(matches[0]) / len(word)  # Favor longer matches
-            if score > best_score:
-                best_score = score
-                best_match = model_variations[matches[0]]
-    
-    return best_match
-
-
-def extract_search_term(prompt, model_key, models):
-    """
-    Remove the identified model phrase from the prompt and clean up filler words.
-    Returns a clean search term or empty string for listing all.
-    Enhanced to handle more complex natural language queries.
-    """
-    model = models[model_key]
-    words = split_camel(model.__name__)
-    phrase = ' '.join(words)
-    plural = phrase + 's'
-    
-    # Expanded list of filler words to remove
-    filler_words = {
-        # Common verbs and auxiliaries
-        'show', 'me', 'tell', 'find', 'search', 'look', 'looking', 'want', 'need',
-        'would', 'could', 'should', 'can', 'may', 'might', 'will', 'shall', 'do', 'does',
-        'did', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
-        'get', 'got', 'getting',
-        
-        # Prepositions and articles
-        'about', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'to', 'with',
-        'the', 'a', 'an', 'this', 'that', 'these', 'those', 
-        
-        # Question words
-        'what', 'which', 'who', 'whom', 'whose', 'when', 'where', 'why', 'how',
-        
-        # Common adjectives and adverbs
-        'all', 'any', 'each', 'every', 'some', 'few', 'many', 'much',
-        'recent', 'latest', 'new', 'available', 'current', 'existing',
-        'today', 'yesterday', 'tomorrow', 'now', 'soon', 'later',
-        'related', 'relevant', 'similar', 'different',
-        
-        # Pronouns
-        'i', 'you', 'he', 'she', 'it', 'we', 'they', 'them', 'their', 'my', 'your',
-        'his', 'her', 'its', 'our', 'your', 'their',
-        
-        # Misc
-        'involve', 'involving', 'trending', 'hot', 'popular', 'whats', "what's", 'right',
-        'please', 'thank', 'thanks', 'would', 'like', 'know', 'more'
-    }
-    
-    # Phrases to completely remove
-    phrases_to_remove = [
-        'are there any', 'do you have', 'can i see', 'can you show me',
-        'i want to see', 'i want to learn', 'i need to know', 'tell me about',
-        'what are the', 'what is the', 'is there any', 'can i learn', 'can i find'
+    # Priority models from home app that we want to search
+    priority_models = [
+        'BlogPost',         # For blog content
+        'CyberChallenge',  # For challenge information
+        'Job',             # For job listings
+        'Article',         # For articles
+        'Skill',           # For skill information
+        'Course',          # For course information
+        'Announcement',    # For announcements
+        'Webpage',         # For webpage content
+        'Project',         # For project information
     ]
     
-    # Convert to lowercase and remove punctuation
-    term = prompt.lower()
-    term = re.sub(r'[?.!,;:]', ' ', term)
+    logger.info("Initializing search engine models...")
     
-    # Remove common phrases first
-    for phrase in phrases_to_remove:
-        term = term.replace(phrase, ' ')
-    
-    # Split into words
-    words = term.split()
-    
-    # Remove model name and its variations
-    model_words = set(phrase.lower().split() + plural.lower().split())
-    
-    # Add more model-specific words to remove
-    if model_key == 'skill':
-        model_words.update(['skill', 'skills', 'learn', 'learning', 'teach', 'training'])
-    elif model_key == 'course':
-        model_words.update(['course', 'courses', 'class', 'classes', 'training'])
-    elif model_key == 'cyberchallenge':
-        model_words.update(['challenge', 'challenges', 'cyber', 'cybersecurity'])
-    
-    words = [w for w in words if w not in model_words]
-    
-    # Remove filler words
-    words = [w for w in words if w not in filler_words]
-    
-    # Remove possessive 's and punctuation from individual words
-    words = [re.sub(r'[\'"]s$', '', w) for w in words]
-    words = [re.sub(r'[^\w\s]', '', w) for w in words]
-    
-    # Remove empty strings after cleaning
-    words = [w for w in words if w]
-    
-    # Rejoin and strip
-    return ' '.join(words).strip()
-
-
-def search_model(model, term='', limit=3):
-    """
-    If term is empty, return the most recent entries by primary key DESC.
-    Otherwise, search across all searchable fields.
-    """
-    qs = model.objects.all()
-    if not term:
-        return qs.order_by('-id')[:limit]
-
-    fields = get_searchable_fields(model)
-    if not fields:
-        return []
-
-    query = Q()
-    for field in fields:
-        query |= Q(**{f"{field}__icontains": term})
-
-    return qs.filter(query).distinct()[:limit]
-
-
-def search_engine(prompt):
-    """
-    Main entry point for dynamic model-based search.
-
-    Examples:
-      "what cyber challenges are today?"
-      "list all announcements"
-      "skills firewall"
-    """
-    models = get_searchable_models('home')
-
-    # Identify model and extract search term
-    key = identify_model_from_prompt(prompt, models)
-    if not key:
-        return {
-            'error': ("Could not identify a model in your query. "
-                      f"Available models: {', '.join(models.keys())}")
-        }
-
-    term = extract_search_term(prompt, key, models)
-    results = search_model(models[key], term)
-    
-    # Format results with metadata
-    return format_model_response(results, {
-        'query': prompt,
-        'identified_model': key,
-        'search_term': term,
-        'timestamp': timezone.now().isoformat()
-    })
-
-
-def verify_search_connection():
-    """
-    Verify the search engine's connection to required services.
-    Returns a dict with status information.
-    """
-    try:
-        # Test database connection by trying to get searchable models
-        models = get_searchable_models()
-        if not models:
-            return {
-                "status": "partial",
-                "message": "Connected but no searchable models found",
-                "diagnostics": {
-                    "database": "ok",
-                    "models_found": 0
-                }
-            }
-        
-        return {
-            "status": "success",
-            "message": "Search engine is fully operational",
-            "diagnostics": {
-                "database": "ok",
-                "models_found": len(models),
-                "timestamp": timezone.now().isoformat()
-            }
-        }
-        
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Search engine connection error: {str(e)}",
-            "diagnostics": {
-                "error_type": type(e).__name__,
-                "timestamp": timezone.now().isoformat()
-            }
-        }
-
-
-def format_model_response(model_results, query_info=None):
-    """
-    Format model search results into a standardized response format.
-    
-    Args:
-        model_results: QuerySet or list of model instances
-        query_info: Optional dict with query metadata
-        
-    Returns:
-        dict: Formatted response with results and metadata
-    """
-    formatted = {
-        "total": len(model_results) if model_results else 0,
-        "results": [],
-        "query_info": query_info or {}
-    }
-    
-    if not model_results:
-        return formatted
-        
-    # Convert model instances to dicts
-    for instance in model_results:
-        result = {
-            "id": instance.id,
-            "model": instance.__class__.__name__,
-        }
-        
-        # Add searchable fields
-        fields = get_searchable_fields(instance.__class__)
-        for field in fields:
-            result[field] = getattr(instance, field, None)
+    # First, add all models from the home app
+    for model in apps.get_models():
+        if model._meta.app_label == 'home':
+            key = model.__name__.lower()
+            model_mapping[key] = model
+            # Also add the verbose name as a key
+            verbose_name = model._meta.verbose_name.lower().replace(' ', '_')
+            model_mapping.setdefault(verbose_name, model)
             
-        formatted["results"].append(result)
-        
-    return formatted
+            # Add common variations of the model name
+            if key.endswith('y'):
+                # Handle plural form (e.g., category -> categories)
+                plural = f"{key[:-1]}ies"
+                model_mapping.setdefault(plural, model)
+            else:
+                # Regular plural
+                model_mapping.setdefault(f"{key}s", model)
+    
+    logger.info(f"Initialized search models: {list(model_mapping.keys())}")
+    return model_mapping
 
-def search(query, user=None):
-    """
-    Main search function that integrates model identification, term extraction,
-    and database querying.
-    
-    Args:
-        query (str): The search query from the user
-        user (str, optional): User identifier for logging/tracking
-        
-    Returns:
-        dict: Search results with metadata
-    """
-    # First try spell correction
-    corrected_query, was_corrected = spell_correct(query)
-    if was_corrected:
-        logger.info(f"Corrected query '{query}' to '{corrected_query}'")
-        query = corrected_query
-    
-    # Get available models
-    models = get_searchable_models('home')
-    
-    # Try to identify which model the user is asking about
-    model_key = identify_model_from_prompt(query, models)
-    if not model_key:
-        return {
-            'error': 'Could not understand what type of information you are looking for.',
-            'query': query,
-            'timestamp': timezone.now().isoformat()
-        }
-    
-    # Extract the actual search term
-    search_term = extract_search_term(query, model_key, models)
-    
-    # Get the results
-    results = search_model(models[model_key], search_term)
-    
-    # Format the response
-    return format_model_response(results, {
-        'query': query,
-        'corrected_query': corrected_query if was_corrected else None,
-        'identified_model': model_key,
-        'search_term': search_term,
-        'user': user,
-        'timestamp': timezone.now().isoformat()
-    })
 
-def format_search_results(search_results, query):
+def extract_keywords(text: str) -> list[str]:
     """
-    Format search results into a chatbot-friendly response format.
-    
-    Args:
-        search_results (dict): Results from the search function
-        query (str): Original search query
-        
-    Returns:
-        dict: Formatted results with title, description, and URL for each result
+    Enhanced keyword extraction using TextBlob.
+    Extracts important words and noun phrases.
     """
-    formatted = {
-        'total': 0,
-        'results': [],
-        'query': query,
-        'timestamp': timezone.now().isoformat()
-    }
+    # Get noun phrases
+    blob = TextBlob(text)
+    noun_phrases = [np for np in blob.noun_phrases if len(np) > 2]
     
-    # Handle error case
-    if isinstance(search_results, dict) and 'error' in search_results:
-        formatted['error'] = search_results['error']
-        return formatted
+    # Get words excluding stopwords (common words like 'the', 'and', etc.)
+    important_words = [
+        word.lower() for word in blob.words 
+        if len(word) > 2 and word.lower() not in ['the', 'and', 'for', 'that', 'this', 'with']
+    ]
     
-    # Get results from the model_response format
-    if isinstance(search_results, dict) and 'results' in search_results:
-        results = search_results['results']
-        formatted['total'] = len(results)
-        
-        for result in results:
-            formatted['results'].append(_format_result_item(result))
+    # Combine and remove duplicates
+    keywords = list(set(important_words + noun_phrases))
     
-    return formatted
-
-def _format_result_item(result):
-    model_name = result.get('model', '').lower()
-    id_str = str(result.get('id', ''))
-    cfg = MODEL_FORMAT.get(model_name)
-    if cfg:
-        name_or_title = result.get('name') or result.get('title') or f'#{id_str}'
-        title = f"{cfg['emoji']} {cfg['label']}: {name_or_title}"
-        if cfg.get('append_difficulty') and 'difficulty' in result:
-            title += f" ({result['difficulty']})"
-        url = cfg['url_pattern'].format(id=result.get('id'))
-    else:
-        title_fields = ['title', 'name', 'subject', 'heading']
-        title = next((result.get(f) for f in title_fields if f in result), f"{model_name.title()} #{id_str}")
-        url = f"/{model_name}/{result.get('id')}"
-    # Build description (include 'message' for announcements)
-    desc_fields = ['message', 'description', 'content', 'text', 'body', 'summary']
-    description = next((result.get(f) for f in desc_fields if f in result), "No description available").strip()
-    if len(description) > 200:
-        description = description[:197] + "..."
-    return {
-        'title': title,
-        'description': description,
-        'url': url,
-        'model': model_name,
-        'id': result.get('id')
-    }
-
-def extract_project_keywords(message):
-    """
-    Extract project-related keywords from a message.
-    This is a legacy function that uses our new search functionality.
-    """
-    # Get available models
-    models = get_searchable_models('home')
-    
-    # Try to identify which model the user is asking about
-    model_key = identify_model_from_prompt(message, models)
-    if not model_key:
-        return []
-    
-    # Extract the search term
-    search_term = extract_search_term(message, model_key, models)
-    
-    # Return both the model key and any additional terms
-    keywords = [model_key]
-    if search_term:
-        keywords.extend(search_term.split())
+    # Fall back to simple regex extraction if TextBlob yields no results
+    if not keywords:
+        keywords = [w for w in re.findall(r"\w+", text.lower()) if len(w) > 2]
     
     return keywords
 
-def extract_keywords(message):
-    """
-    Legacy function that now uses extract_project_keywords.
-    """
-    return extract_project_keywords(message)
 
-# Example usage:
-# >>> search_engine('cyber challenges')
-# Returns top 3 CyberChallenge objects
-# >>> search_engine('announcement')
-# Returns latest 3 Announcement objects
+def spell_correct(word: str, vocabulary: list[str]) -> str:
+    """
+    Correct a single token via TextBlob's spelling correction.
+    Falls back to fuzzy matching if TextBlob correction isn't in vocabulary.
+    """
+    # Try TextBlob correction first
+    blob_word = TextBlob(word)
+    corrected = str(blob_word.correct())
+    
+    # If the corrected word is in our vocabulary, use it
+    if corrected in vocabulary:
+        return corrected
+    
+    # Otherwise, fall back to fuzzy matching
+    matches = get_close_matches(word, vocabulary, n=1, cutoff=0.8)
+    return matches[0] if matches else word
+
+
+def identify_model_from_prompt(prompt: str, models: Dict[str, Any]) -> Optional[Any]:
+    """
+    Return the most appropriate model for the prompt.
+    Uses TextBlob for better keyword extraction and matching.
+    """
+    logger.info(f"Identifying model for prompt: '{prompt}'")
+    
+    # Extract tokens from prompt
+    tokens = extract_keywords(prompt)
+    logger.debug(f"Extracted tokens: {tokens}")
+    
+    # Priority matches based on common question patterns
+    common_patterns = {
+        'job': ['job', 'career', 'position', 'employment', 'work', 'hire', 'hiring'],
+        'cyberchallenges': ['challenge', 'ctf', 'puzzle', 'problem', 'task'],
+        'blogpost': ['blog', 'post', 'article', 'news', 'update'],
+        'skill': ['skill', 'ability', 'competency', 'expertise'],
+        'course': ['course', 'class', 'training', 'education'],
+        'announcement': ['announcement', 'notice', 'update', 'news'],
+        'webpage': ['page', 'website', 'site', 'web', 'appattack', 'malware', 'ptgui', 'smishing', 'vr', 'cybersafe', 'threatmirror'],
+        'project': ['project', 'appattack', 'malware', 'pt-gui', 'smishing', 'vr', 'cybersafe', 'threatmirror']
+    }
+    
+    # Check for pattern matches first
+    for token in tokens:
+        for model_key, patterns in common_patterns.items():
+            if token in patterns and model_key in models:
+                logger.info(f"Found pattern match for token '{token}' -> model '{model_key}'")
+                return models[model_key]
+    
+    # Try direct matching
+    for token in tokens:
+        if token in models:
+            logger.info(f"Found direct model match for token '{token}': {models[token].__name__}")
+            return models[token]
+    
+    # Try with spelling correction
+    for token in tokens:
+        corrected_token = correct_spelling(token)
+        if corrected_token in models:
+            logger.info(f"Found spell-corrected model match: '{token}' -> '{corrected_token}': {models[corrected_token].__name__}")
+            return models[corrected_token]
+    
+    # Check for partial matches
+    for token in tokens:
+        for model_name in models.keys():
+            if token in model_name or model_name in token:
+                logger.info(f"Found partial model match: '{token}' matches '{model_name}': {models[model_name].__name__}")
+                return models[model_name]
+    
+    # Try to match against project names
+    project_patterns = ['appattack', 'malware', 'pt-gui', 'smishing', 'vr', 'cybersafe', 'threatmirror']
+    for token in tokens:
+        if token.lower() in project_patterns:
+            if 'webpage' in models:
+                logger.info(f"Found project name match: '{token}' -> using Webpage model")
+                return models['webpage']
+            elif 'project' in models:
+                logger.info(f"Found project name match: '{token}' -> using Project model")
+                return models['project']
+    
+    # Default to BlogPost for general queries
+    default_model = models.get('blogpost')
+    if default_model:
+        logger.info("No specific model found, defaulting to BlogPost")
+        return default_model
+    
+    # If no BlogPost, try Webpage as fallback
+    fallback_model = models.get('webpage')
+    if fallback_model:
+        logger.info("No BlogPost found, using Webpage as fallback")
+        return fallback_model
+    
+    logger.warning("No matching model found and no default models available")
+    return None
+
+
+def analyze_model_fields(model: Model) -> Dict[str, List[str]]:
+    """
+    Analyze a model's fields and categorize them by type and importance.
+    Returns a dictionary of field categories.
+    """
+    field_categories = {
+        'primary': [],      # Primary identifying fields (title, name, code)
+        'content': [],      # Content fields (description, content, text)
+        'metadata': [],     # Metadata fields (created_at, status, category)
+        'searchable': [],   # All text-searchable fields
+        'display': [],      # Fields suitable for display
+        'date': [],        # Date/time fields
+        'boolean': [],     # Boolean fields
+        'numeric': []      # Numeric fields
+    }
+    
+    # Common field patterns
+    primary_patterns = ['title', 'name', 'code', 'id', 'slug']
+    content_patterns = ['content', 'description', 'text', 'body', 'answer', 'question']
+    metadata_patterns = ['status', 'category', 'type', 'tags', 'keywords']
+    
+    for field in model._meta.fields:
+        field_name = field.name
+        field_type = field.get_internal_type()
+        
+        # Categorize by field type
+        if isinstance(field, (CharField, TextField)):
+            field_categories['searchable'].append(field_name)
+            
+            # Categorize by field name patterns
+            if any(pattern in field_name.lower() for pattern in primary_patterns):
+                field_categories['primary'].append(field_name)
+            elif any(pattern in field_name.lower() for pattern in content_patterns):
+                field_categories['content'].append(field_name)
+            elif any(pattern in field_name.lower() for pattern in metadata_patterns):
+                field_categories['metadata'].append(field_name)
+            
+            field_categories['display'].append(field_name)
+            
+        elif isinstance(field, DateTimeField):
+            field_categories['date'].append(field_name)
+        elif isinstance(field, BooleanField):
+            field_categories['boolean'].append(field_name)
+        elif isinstance(field, IntegerField):
+            field_categories['numeric'].append(field_name)
+    
+    logger.debug(f"Field categories for {model.__name__}: {field_categories}")
+    return field_categories
+
+
+def format_model_result(result: Model, field_categories: Dict[str, List[str]]) -> Dict[str, Any]:
+    """Format a model instance result with all fields."""
+    formatted = {
+        'model': result._meta.model_name,
+        'id': result.id
+    }
+    
+    # Include all fields and their values
+    for field in result._meta.fields:
+        field_name = field.name
+        formatted[field_name] = getattr(result, field_name)
+        
+    # Add related manager instances if they exist
+    for rel in result._meta.related_objects:
+        if hasattr(result, rel.get_accessor_name()):
+            related = getattr(result, rel.get_accessor_name()).all()
+            if related.exists():
+                formatted[rel.name] = [r.id for r in related]
+    
+    return formatted
+
+
+def _format_result_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Format a single result item with all fields."""
+    return item  # Now returns the complete item
+
+
+def perform_search(prompt: str) -> list[Any]:
+    """
+    Identify the target model and return queryset filtered by prompt keywords.
+    Enhanced with TextBlob for more effective searching and smart field handling.
+    """
+    logger.info(f"Performing search for prompt: '{prompt}'")
+    
+    try:
+        models_map = initialize_search_engine()
+        model = identify_model_from_prompt(prompt, models_map)
+        
+        if not model:
+            logger.warning("No suitable model found for search")
+            return []
+        
+        logger.info(f"Using model: {model.__name__}")
+        
+        # Analyze model fields
+        field_categories = analyze_model_fields(model)
+        logger.debug(f"Analyzed fields for {model.__name__}")
+        
+        # Extract keywords with TextBlob
+        keywords = extract_keywords(prompt)
+        logger.debug(f"Extracted keywords: {keywords}")
+        
+        # Check if this is a model-only query
+        model_name = model.__name__.lower()
+        model_verbose_name = model._meta.verbose_name.lower()
+        model_variations = {
+            model_name,
+            f"{model_name}s",
+            model_name[:-1] + "ies" if model_name.endswith('y') else f"{model_name}s",
+            model_verbose_name,
+            f"{model_verbose_name}s",
+        }
+        
+        if len(keywords) == 1 and keywords[0].lower() in model_variations:
+            logger.info("Model-only query detected - returning 3 most recent items")
+            
+            # Determine best ordering field
+            order_field = None
+            # Try primary date fields first
+            for field in ['updated_at', 'created_at', 'last_updated', 'timestamp']:
+                if field in field_categories['date']:
+                    order_field = f'-{field}'
+                    logger.debug(f"Using date field for ordering: {field}")
+                    break
+            
+            # Fallback to priority if available
+            if not order_field and 'priority' in field_categories['numeric']:
+                order_field = '-priority'
+                logger.debug("Using priority field for ordering")
+            
+            # Final fallback to ID
+            if not order_field:
+                order_field = '-id'
+                logger.debug("Using ID for ordering")
+            
+            results = list(model.objects.all().order_by(order_field)[:3])
+            
+            # Format results with relevant fields
+            formatted_results = []
+            for result in results:
+                formatted = format_model_result(result, field_categories)
+                formatted_results.append(formatted)
+                logger.debug(f"Formatted result: {formatted}")
+            
+            return formatted_results
+        
+        # If not a model-only query, build search conditions
+        q_objects = Q()
+        
+        # Special handling for project-related searches
+        project_patterns = ['appattack', 'malware', 'pt-gui', 'smishing', 'vr', 'cybersafe', 'threatmirror']
+        is_project_search = any(pattern in prompt.lower() for pattern in project_patterns)
+        
+        if is_project_search:
+            # If searching for project info, prioritize Project and Webpage models
+            if model.__name__.lower() in ['project', 'webpage']:
+                # Search in all text fields
+                for field in field_categories['searchable']:
+                    for kw in keywords:
+                        q_objects |= Q(**{f"{field}__icontains": kw})
+                
+                # For webpages, also search in URL field
+                if model.__name__.lower() == 'webpage':
+                    for kw in keywords:
+                        q_objects |= Q(url__icontains=kw)
+                
+                # For projects, search in title field
+                if model.__name__.lower() == 'project':
+                    for kw in keywords:
+                        q_objects |= Q(title__icontains=kw)
+        else:
+            # Regular search in primary fields first
+            for field in field_categories['primary']:
+                for kw in keywords:
+                    q_objects |= Q(**{f"{field}__icontains": kw})
+            
+            # Then search in content fields
+            for field in field_categories['content']:
+                for kw in keywords:
+                    q_objects |= Q(**{f"{field}__icontains": kw})
+            
+            # Finally search in metadata fields
+            for field in field_categories['metadata']:
+                for kw in keywords:
+                    q_objects |= Q(**{f"{field}__icontains": kw})
+        
+        logger.debug(f"Built query conditions: {str(q_objects)}")
+        
+        # Execute search
+        results = list(model.objects.filter(q_objects).distinct())
+        
+        # If no results found in primary model and it's a project search,
+        # try the other project-related model
+        if not results and is_project_search:
+            alternate_model = None
+            if model.__name__.lower() == 'project':
+                alternate_model = models_map.get('webpage')
+            elif model.__name__.lower() == 'webpage':
+                alternate_model = models_map.get('project')
+            
+            if alternate_model:
+                logger.info(f"No results found, trying alternate model: {alternate_model.__name__}")
+                alt_field_categories = analyze_model_fields(alternate_model)
+                alt_q_objects = Q()
+                
+                # Search in all text fields of alternate model
+                for field in alt_field_categories['searchable']:
+                    for kw in keywords:
+                        alt_q_objects |= Q(**{f"{field}__icontains": kw})
+                
+                results = list(alternate_model.objects.filter(alt_q_objects).distinct())
+        
+        # Format results with relevant fields
+        formatted_results = []
+        for result in results:
+            formatted = format_model_result(result, field_categories)
+            formatted_results.append(formatted)
+            if formatted_results:
+                logger.debug(f"First formatted result: {formatted_results[0]}")
+        
+        return formatted_results
+        
+    except Exception as e:
+        logger.error(f"Search error: {str(e)}", exc_info=True)
+        return []
+
+
+def verify_search_connection() -> dict:
+    """
+    Verify that the search engine can connect to models and perform a basic search.
+    Returns a status dictionary with details about the connection.
+    """
+    try:
+        # Test model initialization
+        models_map = initialize_search_engine()
+        
+        if not models_map:
+            return {
+                "status": "warning",
+                "message": "Search engine initialized but no models were loaded"
+            }
+            
+        # Try a basic search
+        test_search = perform_search("test")
+        
+        return {
+            "status": "success",
+            "message": "Search engine is connected and operational",
+            "models_count": len(models_map)
+        }
+        
+    except Exception as e:
+        logger.error(f"Search engine connection error: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Could not connect to search engine: {str(e)}"
+        }
+
+
+def format_search_results(results: Dict[str, Any], query: str, format_type: str = 'rich') -> Dict[str, Any]:
+    """Format search results for display.
+    
+    Args:
+        results: Dictionary containing search results or error message
+        query: Original search query string
+        format_type: Type of formatting to apply ('rich' or 'markdown')
+        
+    Returns:
+        Dictionary containing formatted results and metadata
+    """
+    from .result_formatter import format_search_results_rich, format_as_markdown
+    
+    formatted = {
+        'query': query,
+        'total': len(results.get('results', [])) if isinstance(results, dict) else 0,
+        'timestamp': timezone.now().isoformat(),
+        'results': []
+    }
+    
+    # Copy any error message
+    if isinstance(results, dict) and 'error' in results:
+        formatted['error'] = results['error']
+        return formatted
+
+    # Delegate formatting to result_formatter.py based on format type
+    if format_type == 'rich':
+        formatted['display_text'] = format_search_results_rich(results, query)
+    elif format_type == 'markdown':
+        formatted['display_text'] = format_as_markdown(results, query)
+    else:
+        # Plain text format - keep existing logic for backward compatibility
+        if isinstance(results, dict) and 'results' in results:
+            formatted['results'] = [
+                _format_result_item(item) for item in results['results']
+            ]
+    
+    return formatted
+

@@ -1448,3 +1448,16 @@ def get_current_user(request):
             'is_authenticated': False
         })
 
+def login_view(request):
+    if request.method == 'POST':
+        email = request.POST.get('email')  # Changed from username
+        password = request.POST.get('password')
+        user = authenticate(request, email=email, password=password)  # Changed from username to email
+        
+        if user is not None:
+            login(request, user)
+            return redirect('home')
+        else:
+            messages.error(request, "Invalid email or password.")  # Changed from username to email
+            return redirect('login')
+
